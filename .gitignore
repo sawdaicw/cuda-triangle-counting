@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+build/
+data/
+*.gz
+*.bin
+*.docx
+*.pdf
+results/figures/
+.venv/
