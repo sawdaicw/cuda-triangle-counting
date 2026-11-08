@@ -1,12 +1,8 @@
-# CUDA implementation roadmap
+# GPU 单线程串行实现
 
-当前不含 CUDA 内核，不构成可运行 GPU 实现。
+`serial.cu` 的 `serial_kernel<<<1, 1>>>` 在一个 GPU 线程上处理全部定向边。
+CPU 清洗输入、按 `(degree,id)` 定向并构建排序向前 CSR，GPU 用双指针交集累加 64 位三角形数量。
+共享算法见 `../common/graph.hpp`；C++ CPU 入口见 `../cpu/serial.cpp`。
 
-计划接口：输入排序向前 CSR、边端点数组、可选任务索引队列；输出每任务 uint64 计数和最终总数。
-
-- G0: one thread per edge, binary search intersection.
-- G1: one full warp per edge, strided short-list traversal and warp reduction.
-- G2: disjoint thread/warp task queues selected from forward-list lengths.
-- Shared: error checking, empty input, 64-bit offsets/counts, identical reduction accounting.
-
-CUDA 内核完成后增加独立构建配置和 GPU 验证；CPU CI 不能证明 CUDA 正确。
+构建、测试、输入约定及计时边界见仓库根 README。
+该版本用于正确性和环境验证；后续 CUDA 并行策略尚未确定。
