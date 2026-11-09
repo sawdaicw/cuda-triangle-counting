@@ -2,6 +2,8 @@
 
 ## 当前状态
 
+更新：边并行基线已在用户实验室 A800 上通过小图、边界与三个真实图核验，并完成每图 20 次完整流程记录。新增可选 `--profile-preprocess`，见[预处理诊断指南](preprocess_profiling.md)。下面的 CUDA 编译/待验证说明记录初次提交时状态；新诊断路径仍需服务器确认。
+
 目标程序为 `tc_gpu_edge_baseline`。这是自行实现的基础 CUDA 边并行二分交集，作为后续 warp 内局部调度的同 GPU 对照；本次未实现优化版。
 
 本地已验证共享二分交集、CSR 边源点元数据以及跨步分配的 CPU 模拟。CUDA 编译交由新增的 GitHub Actions 编译检查，**其实际结果以 Actions 为准；GPU 运行和性能仍待服务器验证**。不能把原有 GPU 单线程程序通过的测试，算作本程序已经通过。
@@ -99,12 +101,13 @@ Amazon 通过后，再运行：
 ## 3. 参数
 
 ```text
-tc_gpu_edge_baseline INPUT.txt [--verify] [--repeat N] [--warmup N] [--blocks N]
+tc_gpu_edge_baseline INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N]
 ```
 
 | 参数 | 默认值 | 含义 |
 |---|---:|---|
 | INPUT.txt | 必填 | 原有两列整数文本边表，支持整行 #/% 注释 |
+| --profile-preprocess | 关闭 | 增加预处理分项时间对象，不改变图和计数语义 |
 | --verify | 关闭 | 额外用 CPU 双指针串行逻辑核验，与 GPU 二分算法不同 |
 | --repeat N | 10 | 计时重复次数，1～10000 |
 | --warmup N | 2 | 首次完整运行之后、重复计时之前的额外预热次数，0～10000 |

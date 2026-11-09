@@ -2,9 +2,11 @@
 
 P09 并行计算课程项目。目标是实现无向图的精确三角形计数，逐步探索并行方法，并整理成课程论文。
 
-**当前阶段：CPU 串行版和 GPU 单线程版已通过 76 个小图及三个真实图的验证。新增 GPU 边并行二分基线 `tc_gpu_edge_baseline`，本地共享算法检查已通过，CUDA 编译状态以 Actions 为准，GPU 运行仍待验证。后续将探索 warp 内局部调度。**
+**当前阶段：CPU 串行、GPU 单线程及 GPU 边并行二分基线均已完成；边并行基线已在实验室 A800 上通过正确性测试和三个真实图核验。新增可选预处理分项计时，用于决定下一步并行优化热点；尚未实现并行预处理和 warp 局部调度。**
 
 **晚上服务器测试请先看：[GPU 边并行基线测试指南](docs/baseline_testing.md)。** 里面有克隆、编译、完整验证、大图测试、计时边界和输出字段。现有串行版继续保留。
+
+**预处理诊断：[分项计时与运行指南](docs/preprocess_profiling.md)**。CPU 入口和 GPU 边并行入口增加 `--profile-preprocess`，默认关闭；主评价仍为完整计数时间。
 
 ## 阅读导航
 
@@ -42,7 +44,7 @@ P09 并行计算课程项目。目标是实现无向图的精确三角形计数�
 | `python/reference.py` | CPU，Python | 小图参考实现；可使用独立枚举算法核对 |
 | `tc_cpu_serial` | CPU，单线程 C++ | 串行性能基准和结果核对 |
 | `tc_gpu_serial` | GPU，单个 CUDA 线程 | 验证 CUDA 环境及 GPU 上的串行算法 |
-| `tc_gpu_edge_baseline` | GPU，多线程，边并行二分交集 | 优化版本的同 GPU 基线，待服务器验证 |
+| `tc_gpu_edge_baseline` | GPU，多线程，边并行二分交集 | 优化版本的同 GPU 基线，已在 A800 上验证 |
 
 以下介绍已经验证的 GPU 串行版流程；新边并行基线的额外任务元数据、两级归约和计时见[测试指南](docs/baseline_testing.md)。
 
@@ -70,8 +72,11 @@ CPU 与 GPU 使用同一个串行计数函数。区别在于 CPU 直接访问内
 | `CMakeLists.txt` | 告诉 CMake 如何构建 C++/CUDA 可执行文件 | 已可用 |
 | `src/common/graph.hpp` | `Graph` 数据结构、`read_graph` 预处理、`count_serial` 计数 | 核心实现 |
 | `src/cpu/serial.cpp` | CPU 程序入口、CPU 计时、输出 | 已实现 |
+| `src/common/profile_json.hpp` | 可选预处理分项计时的 JSON 输出 | 新增 |
+| `docs/preprocess_profiling.md` | 预处理诊断命令、阶段边界和评价口径 | 新增 |
+| `tests/check_preprocess_profile.py` | 开关诊断的结果一致性和时间核算检查 | CPU 已通过，GPU 待运行 |
 | `src/common/edge_binary.hpp` | 二分交集和边源点任务元数据 | 本地共享算法检查已通过 |
-| `src/cuda/edge_baseline.cu` | 边并行基线、CUB 归约、首次总时间和重复计时 | 待 GPU 验证 |
+| `src/cuda/edge_baseline.cu` | 边并行基线、CUB 归约、首次总时间和重复计时 | 已在 A800 上验证 |
 | `tests/check_baseline.py` | 新基线的课程样例、块边界和重复运行测试 | 需在 GPU 上执行 |
 | `tests/test_edge_binary.cpp` | 二分交集和跨步任务覆盖的 CPU 检查 | 本地已通过 |
 | `docs/baseline_testing.md` | 基线实现、完整计时口径和服务器命令 | 新增 |
@@ -341,7 +346,7 @@ cmake --build build -j 4
 python3 python/reference.py tests/triangle.txt --oracle
 ```
 
-Python 的 `--oracle` 额外枚举三元组，仅允许不超过 100 个顶点。CPU C++ 入口不接受 `--verify` 参数。
+Python 的 `--oracle` 额外枚举三元组，仅允许不超过 100 个顶点。CPU C++ 入口不接受 `--verify` 参数；支持 `--profile-preprocess` 输出相同图预处理的分项时间。
 
 没有 CUDA 的机器可以只编译 CPU：
 
@@ -497,7 +502,7 @@ python3 tests/check_serial.py ./build/tc_gpu_serial
 
 `--verify` 使用相同的计数逻辑核对 CPU/GPU 执行结果；`check_serial.py` 则枚举所有三元组检查三条边是否存在，是另一条独立的正确性核验路径。
 
-这些测试支持“小图验证通过”的结论，不代表所有图都经过验证。GPU 单线程版还已在用户 A100 上通过 Amazon、roadNet-CA、web-Google 的 CPU/GPU 核对，计数分别为 667129、120676、13391903；原始输出来自用户提供的运行记录。尚无 64 位超大计数压力测试或正式重复性能比较。新增边并行基线仍须独立执行验证。
+这些测试支持“小图验证通过”的结论，不代表所有图都经过验证。GPU 单线程版还已在用户 A100 上通过 Amazon、roadNet-CA、web-Google 的 CPU/GPU 核对，计数分别为 667129、120676、13391903；原始输出来自用户提供的运行记录。尚无 64 位超大计数压力测试或正式重复性能比较。边并行基线随后也已在用户实验室 A800 上通过 76 图、边界/跨步/重复运行检查，以及三个真实图核验。新增预处理诊断的 GPU 路径仍待运行确认。
 
 ## 9. 使用边界与后续工作
 
@@ -507,7 +512,7 @@ python3 tests/check_serial.py ./build/tc_gpu_serial
 - 原始 ID 使用有符号 64 位整数；内部顶点索引为 32 位，程序会拒绝超过当前顶点数限制的输入。
 - 总计数使用无符号 64 位整数，当前没有溢出检测。
 - 原有 GPU 单线程入口每次只计数一次。新增边并行入口提供首次完整计数和预热后重复执行两种记录，详见基线测试指南。
-- 现有串行版已通过小图和三个真实图；下一步在服务器验证新增边并行基线，再探索局部调度。
+- 现有串行版已通过小图和三个真实图；边并行基线也已完成 A800 验证；下一步用新增分项计时定位预处理热点，再研究预处理并行化和局部调度。
 - 后续主要性能对照为同一 GPU 上的边并行基线与优化版，比较包含必要预处理、任务元数据、传输和归约的总时间。CPU 串行结果单列，不替代 GPU 同硬件对照。
 
 研究材料见 [研究计划](docs/research_plan.md)、[实验协议](docs/experiment_protocol.md) 和 [论文提纲](paper/outline.md)。这些文件中的早期设计应随探索结果调整。
@@ -544,3 +549,13 @@ mkdir -p results/raw
 只在命令成功后将其作为有效结果，并记录输入、环境、命令和代码提交号。不要把尚未测量的结果填进模板。
 
 仓库尚未指定开源许可证；第三方代码和数据按各自条款使用。
+
+## 11. 本次新增：预处理诊断计时
+
+```bash
+./build-lab/tc_cpu_serial data/com-amazon.ungraph.txt --profile-preprocess
+```
+
+默认仍执行原流程；加参数后输出 `preprocess_profile`：读取解析与边规范化、顶点排序去重、边排序去重、编号映射与度数统计、定向与行长度统计、CSR 前缀和、CSR 填充、邻居段排序。保留 `unattributed_ms` 反映清理等未单列成本。未改变交集算法或并行任务分配。
+
+完整阶段定义、三个图的命令及测试见 [预处理诊断指南](docs/preprocess_profiling.md)。正式比较仍以从读取前到结果回传后的完整时间为主；诊断用于解释和选择优化方向。

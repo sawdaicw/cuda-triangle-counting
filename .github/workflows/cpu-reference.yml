@@ -14,3 +14,4 @@ jobs:
       - run: cmake --build build-cpu -j 2
       - run: python tests/check_serial.py ./build-cpu/tc_cpu_serial
       - run: ctest --test-dir build-cpu --output-on-failure
+      - run: python tests/check_preprocess_profile.py ./build-cpu/tc_cpu_serial

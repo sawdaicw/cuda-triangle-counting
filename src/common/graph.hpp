@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -20,9 +21,34 @@ struct Graph {
     std::size_t vertices() const { return offsets.size() - 1; }
 };
 
+// Optional diagnostic timings, not a different preprocessing algorithm.
+struct PreprocessProfile {
+    double read_parse_normalize_ms = 0;
+    double vertex_sort_unique_ms = 0;
+    double edge_sort_unique_ms = 0;
+    double remap_degree_ms = 0;
+    double orient_row_counts_ms = 0;
+    double csr_scan_ms = 0;
+    double csr_fill_ms = 0;
+    double neighbor_sort_ms = 0;
+    double accounted_ms() const {
+        return read_parse_normalize_ms + vertex_sort_unique_ms + edge_sort_unique_ms
+            + remap_degree_ms + orient_row_counts_ms + csr_scan_ms + csr_fill_ms + neighbor_sort_ms;
+    }
+};
+
 // IDs are sorted before remapping, so dense IDs preserve original ID tie breaks.
 // Vertices appearing only in self-loops remain present, like the Python reference.
-inline Graph read_graph(const std::string& path) {
+inline Graph read_graph(const std::string& path, PreprocessProfile* profile = nullptr) {
+    using ProfileClock = std::chrono::steady_clock;
+    if (profile) *profile = {};
+    auto previous = profile ? ProfileClock::now() : ProfileClock::time_point{};
+    const auto mark = [&](double PreprocessProfile::*field) {
+        if (!profile) return;
+        const auto now = ProfileClock::now();
+        profile->*field = std::chrono::duration<double, std::milli>(now - previous).count();
+        previous = now;
+    };
     std::ifstream input(path);
     if (!input) throw std::runtime_error("Cannot open input: " + path);
     std::vector<std::pair<std::int64_t, std::int64_t>> edges;
@@ -43,12 +69,15 @@ inline Graph read_graph(const std::string& path) {
         if (u != v) edges.emplace_back(std::min(u, v), std::max(u, v));
     }
     if (input.bad()) throw std::runtime_error("Error reading input");
+    mark(&PreprocessProfile::read_parse_normalize_ms);
     std::sort(ids.begin(), ids.end());
     ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
     if (ids.size() > std::numeric_limits<Vertex>::max())
         throw std::runtime_error("Too many vertices for 32-bit vertex indices");
+    mark(&PreprocessProfile::vertex_sort_unique_ms);
     std::sort(edges.begin(), edges.end());
     edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+    mark(&PreprocessProfile::edge_sort_unique_ms);
     std::vector<std::pair<Vertex, Vertex>> dense;
     dense.reserve(edges.size());
     std::vector<Offset> degree(ids.size(), 0);
@@ -58,6 +87,7 @@ inline Graph read_graph(const std::string& path) {
         dense.emplace_back(u, v);
         ++degree[u]; ++degree[v];
     }
+    mark(&PreprocessProfile::remap_degree_ms);
     Graph graph;
     graph.offsets.assign(ids.size() + 1, 0);
     for (auto& edge : dense) {
@@ -66,13 +96,17 @@ inline Graph read_graph(const std::string& path) {
         if (degree[u] > degree[v] || (degree[u] == degree[v] && u > v)) std::swap(u, v);
         ++graph.offsets[static_cast<std::size_t>(u) + 1];
     }
+    mark(&PreprocessProfile::orient_row_counts_ms);
     for (std::size_t i = 1; i < graph.offsets.size(); ++i) graph.offsets[i] += graph.offsets[i - 1];
+    mark(&PreprocessProfile::csr_scan_ms);
     graph.neighbors.resize(dense.size());
     auto cursor = graph.offsets;
     for (const auto& edge : dense) graph.neighbors[cursor[edge.first]++] = edge.second;
+    mark(&PreprocessProfile::csr_fill_ms);
     // Orientation uses (degree,id); intersection uses numeric ID order.
     for (std::size_t u = 0; u < ids.size(); ++u)
         std::sort(graph.neighbors.begin() + graph.offsets[u], graph.neighbors.begin() + graph.offsets[u + 1]);
+    mark(&PreprocessProfile::neighbor_sort_ms);
     return graph;
 }
 

@@ -2,6 +2,7 @@
 #include <cub/block/block_reduce.cuh>
 #include <cub/device/device_reduce.cuh>
 #include "../common/edge_binary.hpp"
+#include "../common/profile_json.hpp"
 #include <chrono>
 #include <cmath>
 #include <iomanip>
@@ -35,7 +36,7 @@ struct Event {
     Event(const Event&) = delete;
     Event& operator=(const Event&) = delete;
 };
-struct Options { std::string input; int repeats = 10, warmup = 2, blocks = 0; bool verify = false; };
+struct Options { std::string input; int repeats = 10, warmup = 2, blocks = 0; bool verify = false, profile_preprocess = false; };
 int integer(const std::string& text, int low, int high) {
     if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos)
         throw std::runtime_error("Expected a nonnegative decimal integer: " + text);
@@ -45,11 +46,12 @@ int integer(const std::string& text, int low, int high) {
     return static_cast<int>(value);
 }
 Options parse(int argc, char** argv) {
-    if (argc < 2) throw std::runtime_error("Usage: tc_gpu_edge_baseline INPUT.txt [--verify] [--repeat N] [--warmup N] [--blocks N]");
+    if (argc < 2) throw std::runtime_error("Usage: tc_gpu_edge_baseline INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N]");
     Options o; o.input = argv[1];
     for (int i = 2; i < argc; ++i) {
         const std::string flag = argv[i];
         if (flag == "--verify") o.verify = true;
+        else if (flag == "--profile-preprocess") o.profile_preprocess = true;
         else if (flag == "--repeat" || flag == "--warmup" || flag == "--blocks") {
             if (++i == argc) throw std::runtime_error("Missing value for " + flag);
             if (flag == "--repeat") o.repeats = integer(argv[i], 1, 10000);
@@ -92,8 +94,9 @@ std::string quote(const std::string& text) {
 int main(int argc, char** argv) {
     try {
         const auto options = parse(argc, argv);
+        tc::PreprocessProfile profile;
         const auto begin = Clock::now();
-        const auto graph = tc::read_graph(options.input);
+        const auto graph = tc::read_graph(options.input, options.profile_preprocess ? &profile : nullptr);
         const auto graph_ready = Clock::now();
         const auto sources = tc::edge_sources(graph);
         const auto metadata_ready = Clock::now();
@@ -172,6 +175,11 @@ int main(int argc, char** argv) {
         std::cout << "],\"count_reduce_ms_min\":" << sorted.front() << ",\"count_reduce_ms_median\":" << median
             << ",\"count_reduce_ms_mean\":" << std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size()
             << ",\"repeated_execution_wall_ms_sum\":" << exec_sum
-            << ",\"verified\":" << (options.verify ? "true" : "false") << ",\"verify_ms\":" << verify_ms << "}\n";
+            << ",\"verified\":" << (options.verify ? "true" : "false") << ",\"verify_ms\":" << verify_ms;
+        if (options.profile_preprocess) {
+            std::cout << ",\"preprocess_profile\":";
+            tc::write_preprocess_profile(std::cout, profile, ms(begin, graph_ready));
+        }
+        std::cout << "}\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

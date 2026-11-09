@@ -1,12 +1,29 @@
 #include "../src/common/edge_binary.hpp"
 #include <iostream>
+#include <cmath>
 #include <random>
 
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc == 2) {
+            tc::PreprocessProfile profile;
+            profile.read_parse_normalize_ms = 999999;
+            const auto plain = tc::read_graph(argv[1]);
+            const auto measured = tc::read_graph(argv[1], &profile);
+            require(plain.offsets == measured.offsets && plain.neighbors == measured.neighbors,
+                    "profiling changed exact CSR arrays");
+            require(std::isfinite(profile.accounted_ms()) && profile.accounted_ms() >= 0,
+                    "invalid preprocessing time");
+            // Reusing a profile object resets it; fields are not accumulated.
+            profile.neighbor_sort_ms = 999999;
+            const auto again = tc::read_graph(argv[1], &profile);
+            require(again.offsets == plain.offsets && again.neighbors == plain.neighbors,
+                    "reused profiling changed CSR");
+            require(profile.neighbor_sort_ms < 999999, "profile was not overwritten");
+        }
         // Check every slice pair of a sorted array (including empty, identical,
         // disjoint, and very unequal slices) against direct enumeration.
         const std::vector<tc::Vertex> items{0, 3, 5, 8, 10, 18, 23, 90};
