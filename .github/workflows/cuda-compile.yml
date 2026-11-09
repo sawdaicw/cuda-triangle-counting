@@ -3,6 +3,9 @@ on: [push, pull_request]
 jobs:
   cuda-compile:
     runs-on: ubuntu-latest
+    env:
+      OMP_WAIT_POLICY: PASSIVE
+      OMP_DYNAMIC: "FALSE"
     container: nvidia/cuda:12.8.1-devel-ubuntu22.04
     steps:
       - uses: actions/checkout@v4

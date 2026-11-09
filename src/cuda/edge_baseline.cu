@@ -3,6 +3,7 @@
 #include <cub/device/device_reduce.cuh>
 #include "../common/edge_binary.hpp"
 #include "../common/profile_json.hpp"
+#include "../common/preprocess.hpp"
 #include <chrono>
 #include <cmath>
 #include <iomanip>
@@ -36,7 +37,7 @@ struct Event {
     Event(const Event&) = delete;
     Event& operator=(const Event&) = delete;
 };
-struct Options { std::string input; int repeats = 10, warmup = 2, blocks = 0; bool verify = false, profile_preprocess = false; };
+struct Options { std::string input; int repeats = 10, warmup = 2, blocks = 0; bool verify = false, profile_preprocess = false; tc::PreprocessOptions preprocess; };
 int integer(const std::string& text, int low, int high) {
     if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos)
         throw std::runtime_error("Expected a nonnegative decimal integer: " + text);
@@ -57,7 +58,7 @@ Options parse(int argc, char** argv) {
             if (flag == "--repeat") o.repeats = integer(argv[i], 1, 10000);
             if (flag == "--warmup") o.warmup = integer(argv[i], 0, 10000);
             if (flag == "--blocks") o.blocks = integer(argv[i], 1, std::numeric_limits<int>::max());
-        } else throw std::runtime_error("Unknown option: " + flag);
+        } else if (!tc::consume_preprocess_option(flag, i, argc, argv, o.preprocess)) throw std::runtime_error("Unknown option: " + flag);
     }
     return o;
 }
@@ -94,9 +95,9 @@ std::string quote(const std::string& text) {
 int main(int argc, char** argv) {
     try {
         const auto options = parse(argc, argv);
-        tc::PreprocessProfile profile;
+        tc::PreprocessProfile profile; tc::PreprocessReport report;
         const auto begin = Clock::now();
-        const auto graph = tc::read_graph(options.input, options.profile_preprocess ? &profile : nullptr);
+        const auto graph = tc::read_graph_configured(options.input, options.preprocess, options.profile_preprocess ? &profile : nullptr, report);
         const auto graph_ready = Clock::now();
         const auto sources = tc::edge_sources(graph);
         const auto metadata_ready = Clock::now();
@@ -154,6 +155,7 @@ int main(int argc, char** argv) {
         const auto k = sorted.size() / 2;
         const double median = sorted.size() % 2 ? sorted[k] : (sorted[k - 1] + sorted[k]) / 2;
         const auto verify_begin = Clock::now();
+        if (options.preprocess.check_csr) tc::check_csr_against_legacy(options.input, graph);
         if (options.verify && first.count != tc::count_serial(graph.vertices(), graph.offsets.data(), graph.neighbors.data()))
             throw std::runtime_error("GPU baseline / CPU merge count mismatch");
         const double verify_ms = ms(verify_begin, Clock::now());
@@ -180,6 +182,8 @@ int main(int argc, char** argv) {
             std::cout << ",\"preprocess_profile\":";
             tc::write_preprocess_profile(std::cout, profile, ms(begin, graph_ready));
         }
+        std::cout << ",\"preprocess_options\":";
+        tc::write_preprocess_options(std::cout, options.preprocess, report, options.profile_preprocess);
         std::cout << "}\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

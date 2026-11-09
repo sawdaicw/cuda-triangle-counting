@@ -2,11 +2,13 @@
 
 P09 并行计算课程项目。目标是实现无向图的精确三角形计数，逐步探索并行方法，并整理成课程论文。
 
-**当前阶段：CPU 串行、GPU 单线程及 GPU 边并行二分基线均已完成；边并行基线已在实验室 A800 上通过正确性测试和三个真实图核验。新增可选预处理分项计时，用于决定下一步并行优化热点；尚未实现并行预处理和 warp 局部调度。**
+**当前阶段：已有 CPU 串行、GPU 单线程和 GPU 边并行基线及其历史验证记录；新增可切换的快速/OpenMP 解析、OpenMP 编号映射和并行排序去重。新主机预处理已通过本地精确 CSR 与回归检查，CUDA 编译以 Actions 为准，新模式的服务器 GPU 运行与性能待验证。GPU 计数内核未变，warp 局部调度尚未实现。**
 
 **晚上服务器测试请先看：[GPU 边并行基线测试指南](docs/baseline_testing.md)。** 里面有克隆、编译、完整验证、大图测试、计时边界和输出字段。现有串行版继续保留。
 
 **预处理诊断：[分项计时与运行指南](docs/preprocess_profiling.md)**。CPU 入口和 GPU 边并行入口增加 `--profile-preprocess`，默认关闭；主评价仍为完整计数时间。
+
+**本轮优化与运行命令：[OpenMP 预处理指南](docs/openmp_preprocessing.md)**。默认保留原版，三项优化可独立切换，用完整总时间评价组合收益。
 
 ## 阅读导航
 
@@ -72,6 +74,9 @@ CPU 与 GPU 使用同一个串行计数函数。区别在于 CPU 直接访问内
 | `CMakeLists.txt` | 告诉 CMake 如何构建 C++/CUDA 可执行文件 | 已可用 |
 | `src/common/graph.hpp` | `Graph` 数据结构、`read_graph` 预处理、`count_serial` 计数 | 核心实现 |
 | `src/cpu/serial.cpp` | CPU 程序入口、CPU 计时、输出 | 已实现 |
+| `src/common/preprocess.hpp`、`preprocess.cpp` | 快速/OpenMP 解析、编号映射、排序去重及开关 | 新增，服务器性能待测 |
+| `scripts/benchmark_preprocess.py` | 交替版本、独立进程采样与汇总；CPU 探索或 GPU 完整总时间 | 新增 |
+| `tests/preprocess_equivalence.cpp`、`check_preprocess_modes.py` | 逐项比较完整 CSR，检查分块、排序边界和错误行号 | 本地已通过 |
 | `src/common/profile_json.hpp` | 可选预处理分项计时的 JSON 输出 | 新增 |
 | `docs/preprocess_profiling.md` | 预处理诊断命令、阶段边界和评价口径 | 新增 |
 | `tests/check_preprocess_profile.py` | 开关诊断的结果一致性和时间核算检查 | CPU 已通过，GPU 待运行 |
@@ -512,7 +517,7 @@ python3 tests/check_serial.py ./build/tc_gpu_serial
 - 原始 ID 使用有符号 64 位整数；内部顶点索引为 32 位，程序会拒绝超过当前顶点数限制的输入。
 - 总计数使用无符号 64 位整数，当前没有溢出检测。
 - 原有 GPU 单线程入口每次只计数一次。新增边并行入口提供首次完整计数和预热后重复执行两种记录，详见基线测试指南。
-- 现有串行版已通过小图和三个真实图；边并行基线也已完成 A800 验证；下一步用新增分项计时定位预处理热点，再研究预处理并行化和局部调度。
+- 现有串行版已通过小图和三个真实图；边并行基线也已完成 A800 验证；下一步用新增分项计时定位预处理热点，再在服务器验证新增 OpenMP 预处理模式；局部调度留作后续。
 - 后续主要性能对照为同一 GPU 上的边并行基线与优化版，比较包含必要预处理、任务元数据、传输和归约的总时间。CPU 串行结果单列，不替代 GPU 同硬件对照。
 
 研究材料见 [研究计划](docs/research_plan.md)、[实验协议](docs/experiment_protocol.md) 和 [论文提纲](paper/outline.md)。这些文件中的早期设计应随探索结果调整。
@@ -559,3 +564,15 @@ mkdir -p results/raw
 默认仍执行原流程；加参数后输出 `preprocess_profile`：读取解析与边规范化、顶点排序去重、边排序去重、编号映射与度数统计、定向与行长度统计、CSR 前缀和、CSR 填充、邻居段排序。保留 `unattributed_ms` 反映清理等未单列成本。未改变交集算法或并行任务分配。
 
 完整阶段定义、三个图的命令及测试见 [预处理诊断指南](docs/preprocess_profiling.md)。正式比较仍以从读取前到结果回传后的完整时间为主；诊断用于解释和选择优化方向。
+
+## 12. 本轮新增：OpenMP 预处理模式
+
+```bash
+./build-lab/tc_cpu_serial data/com-amazon.ungraph.txt \
+  --parser omp --mapping omp --sort omp --threads 8 \
+  --profile-preprocess --check-csr
+```
+
+三项可分别开启，默认 `--parser legacy --mapping fused --sort serial` 调用原版。新解析有快速单线程对照，映射有拆分单线程对照；去重检查全局前驱，跨线程块重复不会遗漏。度数统计及定向/CSR/最终邻居段排序保持串行，GPU 计数及归约不变。
+
+解析细节、主存成本、精确 CSR 测试，以及 3 次探索/20 次完整 GPU 时间的脚本见 [OpenMP 预处理指南](docs/openmp_preprocessing.md)。开启 `--check-csr` 会在计时后额外构建原版 CSR 比较；关闭时不做该额外验证。此前实验结果保留，新增模式不预先声称加速。

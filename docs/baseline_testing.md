@@ -2,6 +2,8 @@
 
 ## 当前状态
 
+新增可选择的 OpenMP 主机预处理，GPU 边并行内核与归约不变，默认仍选择原版。参见 [OpenMP 预处理指南](openmp_preprocessing.md)。新的实际线程数与模式在 preprocess_options 中输出。
+
 更新：边并行基线已在用户实验室 A800 上通过小图、边界与三个真实图核验，并完成每图 20 次完整流程记录。新增可选 `--profile-preprocess`，见[预处理诊断指南](preprocess_profiling.md)。下面的 CUDA 编译/待验证说明记录初次提交时状态；新诊断路径仍需服务器确认。
 
 目标程序为 `tc_gpu_edge_baseline`。这是自行实现的基础 CUDA 边并行二分交集，作为后续 warp 内局部调度的同 GPU 对照；本次未实现优化版。
