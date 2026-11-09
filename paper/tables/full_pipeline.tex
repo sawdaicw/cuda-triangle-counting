@@ -1,0 +1,15 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{完整计数时间与优化加速比}\label{tab:full}
+\begin{tabular}{lrrrr}
+\toprule
+数据集 & 基础版/ms & 优化版/ms & 加速比 & 耗时降低 \\
+\midrule
+Amazon & 933.250 & 566.650 & 1.65$\times$ & 39.3\% \\
+roadNet-CA & 3255.282 & 984.945 & 3.31$\times$ & 69.7\% \\
+web-Google & 3677.514 & 1038.127 & 3.54$\times$ & 71.8\% \\
+\bottomrule
+\end{tabular}
+\par\smallskip{\footnotesize 每版每图独立完整运行20次；表中时间为中位数。优化版为32线程组合预处理，GPU边并行计数相同。}
+\end{table}

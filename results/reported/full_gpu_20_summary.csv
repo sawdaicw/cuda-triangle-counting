@@ -1,0 +1,7 @@
+experiment_id,dataset,variant,n,metric,median_ms,min_ms,max_ms,omp_threads,speedup_vs_legacy,time_reduction_pct,source_kind
+full_gpu_20,com-amazon.ungraph,legacy,20,first_total_ms,933.2502704999999,861.695537,1458.883537,1,1.0,0.0,user_reported_summary
+full_gpu_20,com-amazon.ungraph,omp32,20,first_total_ms,566.649898,455.128957,676.051303,32,1.64696097854058,39.28210728549689,user_reported_summary
+full_gpu_20,roadNet-CA,legacy,20,first_total_ms,3255.281513,3111.268426,3686.561329,1,1.0,0.0,user_reported_summary
+full_gpu_20,roadNet-CA,omp32,20,first_total_ms,984.9447545,887.254311,1090.63693,32,3.3050396970259714,69.74317733914523,user_reported_summary
+full_gpu_20,web-Google,legacy,20,first_total_ms,3677.5140174999997,3587.21029,4570.419268,1,1.0,0.0,user_reported_summary
+full_gpu_20,web-Google,omp32,20,first_total_ms,1038.1268175,921.596634,1301.63178,32,3.5424516114092195,71.77096232509466,user_reported_summary

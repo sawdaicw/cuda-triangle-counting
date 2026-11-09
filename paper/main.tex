@@ -1,0 +1,20 @@
+\documentclass[UTF8,a4paper,11pt,fontset=fandol]{ctexart}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb,booktabs,hyperref}
+\hypersetup{hidelinks}
+\setlength{\emergencystretch}{1em}
+\title{单 GPU 精确三角形计数的并行预处理优化\\\large 阶段性论文初稿}
+\author{作者信息待补充}
+\date{}
+\begin{document}
+\maketitle
+\begin{abstract}
+本文研究无向简单图上的精确三角形计数，使用度数优先定向、排序向前邻居表和单GPU边并行二分交集作为基础流程。针对初步实验中主机预处理占据主要时间的问题，分别引入快速文本解析、OpenMP并行解析、并行编号映射及并行排序去重。在实验室A800共享环境中，三个公开图上的20次独立完整流程测量表明，32线程组合预处理相对于原始流程取得约1.65、3.31和3.54倍的中位数时间加速。本文同时记录计时边界、单项消融和线程扩展结果；原始逐次记录待归档，统计推断和GPU局部调度实验尚未完成。
+\end{abstract}
+\input{sections/problem_definition}
+\input{sections/pipeline}
+\input{sections/preprocessing}
+\input{sections/experiments}
+\input{sections/results}
+\input{sections/discussion}
+\end{document}

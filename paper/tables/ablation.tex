@@ -1,0 +1,19 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{预处理单项与组合消融（中位数，ms）}\label{tab:ablation}
+\begin{tabular}{lrrr}
+\toprule
+配置 & Amazon & roadNet-CA & web-Google \\
+\midrule
+\texttt{legacy} & 513.175 & 2791.512 & 3168.329 \\
+\texttt{fast} & 376.883 & 1984.585 & 2459.786 \\
+\texttt{parse8} & 342.952 & 1696.512 & 2229.596 \\
+\texttt{map1} & 520.483 & 2747.486 & 3165.870 \\
+\texttt{map8} & 406.495 & 2544.171 & 2551.618 \\
+\texttt{sort8} & 438.807 & 2093.300 & 2379.322 \\
+\texttt{all8} & 150.166 & 779.851 & 773.687 \\
+\bottomrule
+\end{tabular}
+\par\smallskip{\footnotesize 每配置每图3次，仅计预处理；不同于完整GPU流程主指标。配置定义见正文。}
+\end{table}

@@ -1,0 +1,62 @@
+{
+  "recorded_date": "2026-11-09",
+  "timezone": "Asia/Shanghai",
+  "provenance": "Numbers transcribed from user-provided terminal JSON and summaries in this conversation, not rerun by the assistant.",
+  "reported_source_commit": "e5c7e5a5f8b85ddc5d9e5bf567386835cae527fc",
+  "source_commit_status": "Derived from archive and commands used in conversation; raw run metadata not yet independently audited.",
+  "raw_per_run_json_present_in_repository": false,
+  "raw_samples_note": "120 original full-task JSON files and associated metadata remain with user; min/median/max cannot reconstruct quartiles, variance or confidence intervals.",
+  "hardware": {
+    "gpu": "NVIDIA A800-SXM4-80GB",
+    "logical_gpu_selected": "CUDA_VISIBLE_DEVICES=0 in reported commands",
+    "cpu_model_string": "AMD EPYC 9754 128-Core Processor",
+    "visible_topology": "2 sockets x 48 cores/socket x 2 threads/core = 192 logical CPUs",
+    "shared_machine": true,
+    "exclusive_gpu": "not established",
+    "cpu_affinity_and_numa": "not explicitly controlled; inherited settings not audited"
+  },
+  "software": {
+    "nvidia_driver": "580.178.04",
+    "nvcc": "12.9.41",
+    "g++": "13.3.0",
+    "cmake": "3.28.3",
+    "python": "3.13.12"
+  },
+  "full_gpu_20": {
+    "samples_per_dataset_per_variant": 20,
+    "datasets": 3,
+    "variants": [
+      "legacy",
+      "omp32"
+    ],
+    "number_of_reported_samples": 120,
+    "metric": "first_total_ms",
+    "statistic": "ratio of variant medians, not median of paired ratios",
+    "profile_enabled": false,
+    "gpu_blocks": 864,
+    "gpu_threads_per_block": 256,
+    "omp_threads_optimized": 32,
+    "gpu_kernel_unchanged": true,
+    "interleaving": "All six dataset/variant jobs shuffled in each round using random seed 42, per supplied terminal script.",
+    "verification": "--verify enabled; CPU verification performed outside first_total_ms",
+    "internal_gpu_runs_per_process": 2,
+    "internal_runs_note": "--warmup 0 --repeat 1; first_total_ms ends at first result before the extra GPU-only run. Only one full-process sample counted per process."
+  },
+  "preprocessing_variants": {
+    "legacy": "original stream parsing, fused serial mapping/degree, serial sort-unique",
+    "fast": "buffer/from_chars single-thread parsing only",
+    "parseN": "OpenMP parsing only",
+    "map1": "split serial mapping and serial degree pass",
+    "mapN": "OpenMP mapping followed by serial degree pass",
+    "sortN": "OpenMP sort/merge/unique for IDs and edges only",
+    "allN": "OpenMP parsing, mapping and sort-unique; degree/orientation/CSR/final row sort remain serial"
+  },
+  "limits": [
+    "Thread count chosen on the same three public datasets, not an independent tuning set.",
+    "Shared-load variation; no statistical significance claim from summaries.",
+    "No cold-disk or controlled file-cache experiment.",
+    "No peak host memory measurements submitted.",
+    "No warp-local scheduling experiment completed.",
+    "High-thread extension was executed by direct terminal script up to 64; repository benchmark script still registers only 2/4/8 as requested."
+  ]
+}

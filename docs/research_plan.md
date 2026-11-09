@@ -1,3 +1,5 @@
+> 状态说明：本文为早期候选研究计划。当前已完成的预处理结果、主计时口径及论文结构以 [阶段性结果](experiment_results.md)、[实验协议](experiment_protocol.md) 和 [论文提纲](../paper/outline.md) 为准；旧G0/G1/G2设计不代表已完成实现。
+
 # CUDA 精确三角形计数研究计划书
 
 ## 一 研究定位与目标

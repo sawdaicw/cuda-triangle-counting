@@ -2,13 +2,15 @@
 
 P09 并行计算课程项目。目标是实现无向图的精确三角形计数，逐步探索并行方法，并整理成课程论文。
 
-**当前阶段：已有 CPU 串行、GPU 单线程和 GPU 边并行基线及其历史验证记录；新增可切换的快速/OpenMP 解析、OpenMP 编号映射和并行排序去重。新主机预处理已通过本地精确 CSR 与回归检查，CUDA 编译以 Actions 为准，新模式的服务器 GPU 运行与性能待验证。GPU 计数内核未变，warp 局部调度尚未实现。**
+**当前阶段：OpenMP并行预处理已完成A800上的真实图验证、单项消融、至64线程扫描及32线程组合版的20次完整流程对照；完整任务中位数加速约1.65×、3.31×、3.54×。GPU计数内核相同，warp局部调度尚未实现。汇总来自用户报告，原始逐次记录待归档。**
 
 **晚上服务器测试请先看：[GPU 边并行基线测试指南](docs/baseline_testing.md)。** 里面有克隆、编译、完整验证、大图测试、计时边界和输出字段。现有串行版继续保留。
 
 **预处理诊断：[分项计时与运行指南](docs/preprocess_profiling.md)**。CPU 入口和 GPU 边并行入口增加 `--profile-preprocess`，默认关闭；主评价仍为完整计数时间。
 
 **本轮优化与运行命令：[OpenMP 预处理指南](docs/openmp_preprocessing.md)**。默认保留原版，三项优化可独立切换，用完整总时间评价组合收益。
+
+**实验整理与论文：[阶段性结果](docs/experiment_results.md) · [汇总CSV及来源](results/reported/README.md) · [LaTeX初稿](paper/README.md) · [论文提纲](paper/outline.md)。**
 
 ## 阅读导航
 
@@ -62,7 +64,7 @@ GPU 串行版内部的职责如下：
 | 6 | GPU → CPU | 将最终的 64 位计数复制回来 |
 | 7 | CPU | 可选核验，输出 JSON |
 
-`serial_kernel<<<1, 1>>>` 表示只启动 **1 个线程块、每块 1 个线程**。当前没有并行分配边，也没有原子累加或并行归约。
+`serial_kernel<<<1, 1>>>` 表示只启动 **1 个线程块、每块 1 个线程**。这个单线程入口没有并行分配边；后续边并行入口使用多线程与两级归约。
 
 CPU 与 GPU 使用同一个串行计数函数。区别在于 CPU 直接访问内存，GPU 访问复制到显存中的数据。
 
@@ -74,7 +76,7 @@ CPU 与 GPU 使用同一个串行计数函数。区别在于 CPU 直接访问内
 | `CMakeLists.txt` | 告诉 CMake 如何构建 C++/CUDA 可执行文件 | 已可用 |
 | `src/common/graph.hpp` | `Graph` 数据结构、`read_graph` 预处理、`count_serial` 计数 | 核心实现 |
 | `src/cpu/serial.cpp` | CPU 程序入口、CPU 计时、输出 | 已实现 |
-| `src/common/preprocess.hpp`、`preprocess.cpp` | 快速/OpenMP 解析、编号映射、排序去重及开关 | 新增，服务器性能待测 |
+| `src/common/preprocess.hpp`、`preprocess.cpp` | 快速/OpenMP 解析、编号映射、排序去重及开关 | 已完成真实图测量，见阶段性结果 |
 | `scripts/benchmark_preprocess.py` | 交替版本、独立进程采样与汇总；CPU 探索或 GPU 完整总时间 | 新增 |
 | `tests/preprocess_equivalence.cpp`、`check_preprocess_modes.py` | 逐项比较完整 CSR，检查分块、排序边界和错误行号 | 本地已通过 |
 | `src/common/profile_json.hpp` | 可选预处理分项计时的 JSON 输出 | 新增 |
@@ -485,7 +487,7 @@ git pull --ff-only
 python3 tests/check_serial.py ./build/tc_gpu_serial
 ```
 
-上述 76 图是已有串行验证集；新增边并行基线需要重新编译并执行 `tests/check_baseline.py`。三个真实图的串行运行记录见下文，边并行性能仍待服务器测试。
+上述 76 图是已有串行验证集；新增边并行基线需要重新编译并执行 `tests/check_baseline.py`。三个真实图的串行运行记录见下文，边并行和OpenMP预处理的性能已整理至阶段性结果。
 
 ### 8.2 原有 37 个额外测试包含哪些情况
 
@@ -507,7 +509,7 @@ python3 tests/check_serial.py ./build/tc_gpu_serial
 
 `--verify` 使用相同的计数逻辑核对 CPU/GPU 执行结果；`check_serial.py` 则枚举所有三元组检查三条边是否存在，是另一条独立的正确性核验路径。
 
-这些测试支持“小图验证通过”的结论，不代表所有图都经过验证。GPU 单线程版还已在用户 A100 上通过 Amazon、roadNet-CA、web-Google 的 CPU/GPU 核对，计数分别为 667129、120676、13391903；原始输出来自用户提供的运行记录。尚无 64 位超大计数压力测试或正式重复性能比较。边并行基线随后也已在用户实验室 A800 上通过 76 图、边界/跨步/重复运行检查，以及三个真实图核验。新增预处理诊断的 GPU 路径仍待运行确认。
+这些测试支持“小图验证通过”的结论，不代表所有图都经过验证。GPU 单线程版还已在用户 A100 上通过 Amazon、roadNet-CA、web-Google 的 CPU/GPU 核对，计数分别为 667129、120676、13391903；原始输出来自用户提供的运行记录。尚无 64 位超大计数压力测试；正式重复性能比较见阶段性结果。边并行基线随后也已在用户实验室 A800 上通过 76 图、边界/跨步/重复运行检查，以及三个真实图核验。新增预处理及GPU组合已有正式完整流程记录，见阶段性结果。
 
 ## 9. 使用边界与后续工作
 
@@ -576,3 +578,17 @@ mkdir -p results/raw
 三项可分别开启，默认 `--parser legacy --mapping fused --sort serial` 调用原版。新解析有快速单线程对照，映射有拆分单线程对照；去重检查全局前驱，跨线程块重复不会遗漏。度数统计及定向/CSR/最终邻居段排序保持串行，GPU 计数及归约不变。
 
 解析细节、主存成本、精确 CSR 测试，以及 3 次探索/20 次完整 GPU 时间的脚本见 [OpenMP 预处理指南](docs/openmp_preprocessing.md)。开启 `--check-csr` 会在计时后额外构建原版 CSR 比较；关闭时不做该额外验证。此前实验结果保留，新增模式不预先声称加速。
+
+## 13. 已报告完整流程主结果
+
+同一A800、相同GPU计数内核；每版每图20次独立完整运行，比较 first_total_ms 的中位数。
+
+| 数据集 | 基础版/ms | 32线程预处理优化版/ms | 完整任务加速比 |
+|---|---:|---:|---:|
+| Amazon | 933.250 | 566.650 | 1.65× |
+| roadNet-CA | 3255.282 | 984.945 | 3.31× |
+| web-Google | 3677.514 | 1038.127 | 3.54× |
+
+完整计时包括读取、必要预处理、OpenMP准备、CUDA初始化、显存分配、传输、计数与归约。不是内核加速比。3次探索与20次正式比较分别记录，不混合不同轮次；32线程为同批数据上选定的统一配置，不声称全局最优。
+
+数据来自用户贴出的终端汇总，原始120份逐次JSON尚未提交；不由摘要反推箱线图或置信区间。CSV、环境、版本及限制见 [实验结果说明](docs/experiment_results.md)。LaTeX第一节为“问题定义”，第二节为“图预处理与精确计数流程”；表格由CSV生成。

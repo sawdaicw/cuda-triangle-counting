@@ -1,0 +1,4 @@
+dataset,vertices,undirected_edges,triangles
+com-amazon.ungraph,334863,925872,667129
+roadNet-CA,1965206,2766607,120676
+web-Google,875713,4322051,13391903

@@ -1,0 +1,4 @@
+experiment_id,dataset,variant,n,metric,median_ms,min_ms,max_ms,source_kind
+historical_baseline_full20,com-amazon.ungraph,legacy,20,first_total_ms,931.228,856.072,1011.293,user_reported_summary
+historical_baseline_full20,roadNet-CA,legacy,20,first_total_ms,3209.273,3099.662,4153.953,user_reported_summary
+historical_baseline_full20,web-Google,legacy,20,first_total_ms,3634.905,3547.845,3760.06,user_reported_summary

@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+\centering
+\small
+\caption{组合预处理的高线程数扫描（中位数，ms）}\label{tab:threads}
+\begin{tabular}{rrrr}
+\toprule
+线程数 & Amazon & roadNet-CA & web-Google \\
+\midrule
+8 & 150.513 & 715.829 & 791.550 \\
+16 & 123.352 & 608.375 & 622.032 \\
+32 & 116.638 & 553.633 & 580.379 \\
+64 & 118.860 & 579.019 & 575.759 \\
+\bottomrule
+\end{tabular}
+\par\smallskip{\footnotesize 每配置每图3次；仅使用同一轮8/16/32/64线程扫描，不与早期2/4/8轮次混合。}
+\end{table}

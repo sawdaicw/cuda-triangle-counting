@@ -1,0 +1,5 @@
+experiment_id,dataset,variant,n,preprocess_ms,read_parse_normalize_ms,vertex_sort_unique_ms,edge_sort_unique_ms,remap_degree_ms,orient_row_counts_ms,csr_scan_ms,csr_fill_ms,neighbor_sort_ms,unattributed_ms
+preprocess_profile_single,com-amazon.ungraph,legacy,1,500.498398,209.852395,105.304778,25.272849,139.408,6.78627,0.127078,7.320349,3.627267,2.799412
+preprocess_profile_single,roadNet-CA,legacy,1,2725.306779,1406.381174,558.572883,420.938217,254.481234,26.220444,0.758452,25.698612,15.783042,16.472721
+preprocess_profile_single,web-Google,legacy,1,3186.768354,1248.960132,615.940037,481.911258,740.302593,30.183922,0.333053,37.736618,14.124489,17.276252
+preprocess_profile_single,com-amazon.ungraph,all8,1,152.807317,45.916547,33.515122,22.786892,29.209693,8.446512,0.138217,7.772162,3.493653,1.528519

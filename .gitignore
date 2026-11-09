@@ -9,3 +9,11 @@ data/
 *.pdf
 results/figures/
 .venv/
+
+# LaTeX generated files
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.xdv
+paper/build/
