@@ -47,9 +47,10 @@ def course_cases():
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit('Usage: python3 tests/check_serial.py ./build/tc_gpu_serial')
+    if len(sys.argv) < 2:
+        raise SystemExit('Usage: python3 tests/check_serial.py EXECUTABLE [EXTRA PROGRAM OPTIONS]')
     executable = str(Path(sys.argv[1]).resolve())
+    extra = sys.argv[2:]
     cases = [[], [(9, 9)], [(10, 20), (20, 12), (12, 10)],
              list(itertools.combinations(range(8), 2)),
              [(0, i) for i in range(1, 20)],
@@ -67,7 +68,7 @@ def main():
         path = Path(directory) / 'graph.txt'
         for name, edges, specified in named_cases:
             path.write_text('# test\n% comment\n\n' + ''.join(f'{u} {v}\n' for u, v in edges))
-            result = subprocess.run([executable, str(path)], text=True, capture_output=True, check=True)
+            result = subprocess.run([executable, str(path), *extra], text=True, capture_output=True, check=True)
             output = json.loads(result.stdout)
             nodes, clean = normalize(edges)
             expected = count_bruteforce(edges)
@@ -80,7 +81,7 @@ def main():
             print(f'PASS {name}: vertices={actual[0]} edges={actual[1]} triangles={actual[2]}')
         for text in ['1 2 3\n', 'not an edge\n', '9223372036854775808 1\n']:
             path.write_text(text)
-            result = subprocess.run([executable, str(path)], text=True, capture_output=True)
+            result = subprocess.run([executable, str(path), *extra], text=True, capture_output=True)
             if result.returncode == 0 or 'Line 1:' not in result.stderr:
                 raise AssertionError(result)
     print(f'PASS: {len(named_cases)} graphs match brute-force oracle; 3 malformed inputs rejected')

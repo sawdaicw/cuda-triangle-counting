@@ -1,0 +1,14 @@
+name: CUDA compile checks
+on: [push, pull_request]
+jobs:
+  cuda-compile:
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: apt-get update && apt-get install -y --no-install-recommends cmake g++
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=80
+      - run: cmake --build build -j 2
+      - run: ctest --test-dir build --output-on-failure
+      # Hosted runners have no CUDA GPU: this checks compilation and CPU tests,
+      # NOT device execution or GPU correctness/performance.
