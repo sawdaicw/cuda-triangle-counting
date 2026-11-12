@@ -29,3 +29,7 @@
 - 当前仓库reported目录只有用户提供的汇总，不含全部逐次JSON。没有原始数据就不生成方差、箱线图、置信区间或显著性结论。
 
 CPU串行性能单列，不替代同GPU对照。与库或论文代码对照属于后续扩展，未完成前不写结果。
+
+## GPU任务划分探索（新入口，结果待测）
+
+对比 `tc_gpu_edge_baseline`、`tc_gpu_warp`、`tc_gpu_split` 时使用同一图、GPU和预处理配置。完整时间包括分流队列准备及全部核函数；辅助GPU指标使用整个 `first_count_reduce_ms`，不能只看重边阶段。默认关闭额外GPU分项event；诊断另开 `--profile-gpu`。探索批量脚本及原始记录说明见 [warp调度指南](warp_scheduling.md)。所有现有结果仍属探索，最终配置确定后再统一批量重跑。

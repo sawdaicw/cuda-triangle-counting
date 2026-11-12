@@ -2,7 +2,7 @@
 
 P09 并行计算课程项目。目标是实现无向图的精确三角形计数，逐步探索并行方法，并整理成课程论文。
 
-**当前阶段：OpenMP并行预处理已完成A800上的真实图验证、单项消融、至64线程扫描及32线程组合版的20次完整流程对照；完整任务中位数加速约1.65×、3.31×、3.54×。GPU计数内核相同，warp局部调度尚未实现。汇总来自用户报告，原始逐次记录待归档。**
+**当前阶段：OpenMP并行预处理已完成A800上的真实图验证、单项消融、至64线程扫描及32线程组合版的20次完整流程对照；完整任务中位数加速约1.65×、3.31×、3.54×。以上历史结果使用相同GPU计数内核，汇总来自用户报告，属于探索性测量，原始逐次记录待归档。新加入固定warp协作和轻重分流两个实验入口，尚无GPU性能结果；动态warp局部调度仍待探索。**
 
 **晚上服务器测试请先看：[GPU 边并行基线测试指南](docs/baseline_testing.md)。** 里面有克隆、编译、完整验证、大图测试、计时边界和输出字段。现有串行版继续保留。
 
@@ -11,6 +11,8 @@ P09 并行计算课程项目。目标是实现无向图的精确三角形计数�
 **本轮优化与运行命令：[OpenMP 预处理指南](docs/openmp_preprocessing.md)**。默认保留原版，三项优化可独立切换，用完整总时间评价组合收益。
 
 **实验整理与论文：[阶段性结果](docs/experiment_results.md) · [汇总CSV及来源](results/reported/README.md) · [LaTeX初稿](paper/README.md) · [论文提纲](paper/outline.md)。**
+
+**新增 GPU 调度探索：[warp 协作与轻重分流指南](docs/warp_scheduling.md)。** `tc_gpu_warp` 为每条边分配一个 warp；`tc_gpu_split` 为轻边分配线程、重边分配 warp。附统一对比脚本，保持预处理相同，计入队列和额外启动成本。
 
 ## 阅读导航
 
@@ -41,7 +43,7 @@ P09 并行计算课程项目。目标是实现无向图的精确三角形计数�
 
 ## 2. 整个程序怎样运行
 
-当前提供四个入口：
+当前提供六个入口：
 
 | 程序 | 在哪里计数 | 主要用途 |
 |---|---|---|
@@ -49,6 +51,8 @@ P09 并行计算课程项目。目标是实现无向图的精确三角形计数�
 | `tc_cpu_serial` | CPU，单线程 C++ | 串行性能基准和结果核对 |
 | `tc_gpu_serial` | GPU，单个 CUDA 线程 | 验证 CUDA 环境及 GPU 上的串行算法 |
 | `tc_gpu_edge_baseline` | GPU，多线程，边并行二分交集 | 优化版本的同 GPU 基线，已在 A800 上验证 |
+| `tc_gpu_warp` | GPU，一 warp 协作处理一条边，二分交集 | 新增探索实现，GPU 实测待完成 |
+| `tc_gpu_split` | GPU，轻边单线程、重边入队后 warp 协作 | 新增探索实现，阈值可调，GPU 实测待完成 |
 
 以下介绍已经验证的 GPU 串行版流程；新边并行基线的额外任务元数据、两级归约和计时见[测试指南](docs/baseline_testing.md)。
 
@@ -83,7 +87,11 @@ CPU 与 GPU 使用同一个串行计数函数。区别在于 CPU 直接访问内
 | `docs/preprocess_profiling.md` | 预处理诊断命令、阶段边界和评价口径 | 新增 |
 | `tests/check_preprocess_profile.py` | 开关诊断的结果一致性和时间核算检查 | CPU 已通过，GPU 待运行 |
 | `src/common/edge_binary.hpp` | 二分交集和边源点任务元数据 | 本地共享算法检查已通过 |
-| `src/cuda/edge_baseline.cu` | 边并行基线、CUB 归约、首次总时间和重复计时 | 已在 A800 上验证 |
+| `src/cuda/edge_baseline.cu` | 三个边任务入口共用的执行/计时框架，编译期选择线程、warp、分流模式 | 原基线已验证，新模式待GPU实测 |
+| `src/cuda/warp_kernels.cuh`、`src/common/warp_tasks.hpp` | warp 查询分片、轻重分流、设备任务队列 | 新增探索实现 |
+| `tests/test_warp_tasks.cpp`、`tests/check_warp.py` | CPU任务覆盖和GPU队列/阈值/重复运行验证 | CPU已通过，GPU待运行 |
+| `scripts/benchmark_scheduling.py` | 相同预处理下对比 edge/warp/split，独立进程、保存原始JSON | 新增 |
+| `docs/warp_scheduling.md` | 新入口原理、编译测试、阈值及计时解释 | 新增 |
 | `tests/check_baseline.py` | 新基线的课程样例、块边界和重复运行测试 | 需在 GPU 上执行 |
 | `tests/test_edge_binary.cpp` | 二分交集和跨步任务覆盖的 CPU 检查 | 本地已通过 |
 | `docs/baseline_testing.md` | 基线实现、完整计时口径和服务器命令 | 新增 |
@@ -592,3 +600,18 @@ mkdir -p results/raw
 完整计时包括读取、必要预处理、OpenMP准备、CUDA初始化、显存分配、传输、计数与归约。不是内核加速比。3次探索与20次正式比较分别记录，不混合不同轮次；32线程为同批数据上选定的统一配置，不声称全局最优。
 
 数据来自用户贴出的终端汇总，原始120份逐次JSON尚未提交；不由摘要反推箱线图或置信区间。CSV、环境、版本及限制见 [实验结果说明](docs/experiment_results.md)。LaTeX第一节为“问题定义”，第二节为“图预处理与精确计数流程”；表格由CSV生成。
+
+### GPU 调度探索的快速入口
+
+重新运行 CMake 和构建后，会增加 `tc_gpu_warp`、`tc_gpu_split`；原来的三个 C++/CUDA 程序仍保留。先做正确性检查，再做探索对比：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python3 tests/check_warp.py \
+  ./build-lab/tc_gpu_warp ./build-lab/tc_gpu_split
+
+CUDA_VISIBLE_DEVICES=0 python3 scripts/benchmark_scheduling.py \
+  --build build-lab --threads 32 --runs 3 \
+  --thresholds 16 32 64 --out results/raw/warp_explore_01
+```
+
+完整说明见 [warp 调度指南](docs/warp_scheduling.md)。当前论文和历史表格尚未加入新入口的性能结论。
