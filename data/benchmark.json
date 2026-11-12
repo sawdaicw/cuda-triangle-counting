@@ -113,7 +113,7 @@
       "tier": "core",
       "path": "data/Wiki-Vote.txt",
       "source_page": "https://snap.stanford.edu/data/wiki-Vote.html",
-      "download_url": "https://snap.stanford.edu/data/Wiki-Vote.txt.gz",
+      "download_url": "https://snap.stanford.edu/data/wiki-Vote.txt.gz",
       "original_directed": true,
       "source_reference": "WeTriC Table 3 WKV",
       "purpose": "小图但含较长交集；观察短核函数开销",

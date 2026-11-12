@@ -17,3 +17,5 @@ python3 scripts/prepare_benchmark.py generate --suite core
 **不要用 `data/*.txt` 直接收集输入**，因为其中包括说明文件 `benchmark.txt`。使用脚本 `paths` 动作导出已准备好的图路径。
 
 这是探索集，参考计数不代表已在当前机器实测。先检查正确性，再比较同一设备上的完整任务时间；后续论文实验另行冻结配置和评测划分。
+
+W2 的官网下载地址为 `https://snap.stanford.edu/data/wiki-Vote.txt.gz`（小写 w），本地文件名仍为 `Wiki-Vote.txt`。来源网页的链接显示文字与实际 URL 大小写不同，下载以清单的 `download_url` 为准。

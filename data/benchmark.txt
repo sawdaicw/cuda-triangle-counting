@@ -74,7 +74,7 @@ python3 scripts/prepare_benchmark.py generate --ids X2
 [W2] Wiki-Vote.txt (core)
   来源: WeTriC Table 3 WKV
   页面: https://snap.stanford.edu/data/wiki-Vote.html
-  下载: https://snap.stanford.edu/data/Wiki-Vote.txt.gz
+  下载: https://snap.stanford.edu/data/wiki-Vote.txt.gz
   本地: data/Wiki-Vote.txt
   公开顶点数=7,115; 公开原始边数=103,689; 原图有向=True
   清洗后边数参考=100,762; 三角形数参考=608,389
@@ -107,7 +107,7 @@ python3 scripts/prepare_benchmark.py generate --ids X2
   清洗后边数参考=117,185,083; 三角形数参考=627,584,181
   用途: 可选大规模社交图；先检查主机内存和磁盘
 
-注意：W1 Amazon0302不是C1 com-Amazon。W2文件名是Wiki-Vote.txt（大小写敏感）。
+注意：W1 Amazon0302不是C1 com-Amazon。W2本地文件名保留Wiki-Vote.txt；官网URL为wiki-Vote.txt.gz（小写w，大小写敏感）。
 W4源页边数16518948，而论文清洗后16518947，必须实际清洗确认，不手改输入迎合计数。
 TRUST会移除孤立点，我们的实现保留端点声明的顶点；顶点数不一定能逐项照抄。
 X1有约1.17亿条边；主机清洗的边对、编号表和排序缓冲可能比最终GPU CSR占用大很多。
