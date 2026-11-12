@@ -2,7 +2,10 @@ __pycache__/
 *.pyc
 build/
 build-*/
-data/
+data/*
+!data/README.md
+!data/benchmark.txt
+!data/benchmark.json
 *.gz
 *.bin
 *.docx

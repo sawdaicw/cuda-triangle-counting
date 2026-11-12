@@ -1,0 +1,234 @@
+CUDA Triangle Counting Benchmark — explore-v1
+============================================
+
+用途：课程P09的探索评测集；不是最终论文结果，不预设warp/分流一定更快。
+主集 core：14图 = 7真实图 + 7合成图。course：课程3真实图+S1/S2/S3。
+extended：主集 + X1 Orkut + X2 K1024团链；可选，不自动包含在core。
+
+文件格式与清洗
+--------------
+输入为两列整数端点，空白分隔；#/%开头是注释，无n/m头部。
+去自环、合并无向重复边；任一方向存在就保留无向边；保留出现在端点中的顶点。
+所有版本读取同一份输入，报告实际清洗后的n、m和64位三角形数。
+源页面有向边数与我们的无向边数不可混用。公开计数只是参考，须在本地重新核对。
+
+准备命令（在仓库根目录）
+------------------------
+python3 scripts/prepare_benchmark.py list --suite core
+python3 scripts/prepare_benchmark.py download --suite core
+python3 scripts/prepare_benchmark.py generate --suite core
+
+已有C1/C2/C3时只下载新增论文图：
+python3 scripts/prepare_benchmark.py download --ids W1 W2 W3 W4
+只构造课程三张图：
+python3 scripts/prepare_benchmark.py generate --ids S1 S2 S3
+可选扩展（单独执行，不建议首轮就上Orkut）：
+python3 scripts/prepare_benchmark.py download --ids X1
+python3 scripts/prepare_benchmark.py generate --ids X2
+
+下载需wget，支持-c断点续传；保留gz并流式解压，校验gzip CRC。
+脚本不覆盖已有txt；跳过时打印本地SHA256，但不把它当成已验证的官方文件。
+新下载/生成文件旁写.meta.json，记录来源/参数/哈希。下载哈希为本地记录，并非官方校验值。
+合成使用Python标准库，确定性构造、分批写盘，不在内存保存全部边。
+原始下载和解压、图生成、SHA256计算不计入算法执行时间；各版本运行时的图预处理必须计入。
+
+真实图（规模与计数均为公开/历史参考，非本轮新实测）
+--------------------------------------------------
+
+[C1] com-amazon.ungraph.txt (core)
+  来源: course C1
+  页面: https://snap.stanford.edu/data/com-Amazon.html
+  下载: https://snap.stanford.edu/data/bigdata/communities/com-amazon.ungraph.txt.gz
+  本地: data/com-amazon.ungraph.txt
+  公开顶点数=334,863; 公开原始边数=925,872; 原图有向=False
+  清洗后边数参考=925,872; 三角形数参考=667,129
+  用途: 商品局部团簇；保留已有结果
+
+[C2] roadNet-CA.txt (core)
+  来源: course C2; WeTriC Table 3 RNC
+  页面: https://snap.stanford.edu/data/roadNet-CA.html
+  下载: https://snap.stanford.edu/data/roadNet-CA.txt.gz
+  本地: data/roadNet-CA.txt
+  公开顶点数=1,965,206; 公开原始边数=2,766,607; 原图有向=False
+  清洗后边数参考=2,766,607; 三角形数参考=120,676
+  用途: 低度稀疏图；短任务与启动开销
+
+[C3] web-Google.txt (core)
+  来源: course C3
+  页面: https://snap.stanford.edu/data/web-Google.html
+  下载: https://snap.stanford.edu/data/web-Google.txt.gz
+  本地: data/web-Google.txt
+  公开顶点数=875,713; 公开原始边数=5,105,039; 原图有向=True
+  清洗后边数参考=4,322,051; 三角形数参考=13,391,903
+  用途: 有向网页转无向；保留已有结果
+
+[W1] amazon0302.txt (core)
+  来源: WeTriC Table 3 AMZ
+  页面: https://snap.stanford.edu/data/amazon0302.html
+  下载: https://snap.stanford.edu/data/amazon0302.txt.gz
+  本地: data/amazon0302.txt
+  公开顶点数=262,111; 公开原始边数=1,234,877; 原图有向=True
+  清洗后边数参考=899,792; 三角形数参考=717,719
+  用途: 论文商品图；与com-Amazon区分
+
+[W2] Wiki-Vote.txt (core)
+  来源: WeTriC Table 3 WKV
+  页面: https://snap.stanford.edu/data/wiki-Vote.html
+  下载: https://snap.stanford.edu/data/Wiki-Vote.txt.gz
+  本地: data/Wiki-Vote.txt
+  公开顶点数=7,115; 公开原始边数=103,689; 原图有向=True
+  清洗后边数参考=100,762; 三角形数参考=608,389
+  用途: 小图但含较长交集；观察短核函数开销
+
+[W3] soc-Epinions1.txt (core)
+  来源: WeTriC Table 3 SE1
+  页面: https://snap.stanford.edu/data/soc-Epinions1.html
+  下载: https://snap.stanford.edu/data/soc-Epinions1.txt.gz
+  本地: data/soc-Epinions1.txt
+  公开顶点数=75,879; 公开原始边数=508,837; 原图有向=True
+  清洗后边数参考=405,740; 三角形数参考=1,624,481
+  用途: 社交信任图；不同度数分布
+
+[W4] cit-Patents.txt (core)
+  来源: WeTriC Table 3 CIP; TRUST Table 2 CP
+  页面: https://snap.stanford.edu/data/cit-Patents.html
+  下载: https://snap.stanford.edu/data/cit-Patents.txt.gz
+  本地: data/cit-Patents.txt
+  公开顶点数=3,774,768; 公开原始边数=16,518,948; 原图有向=True
+  清洗后边数参考=16,518,947; 三角形数参考=7,515,023
+  用途: 更大真实图；下载/预处理成本也增大
+
+[X1] com-orkut.ungraph.txt (extended)
+  来源: TRUST Table 2 OR
+  页面: https://snap.stanford.edu/data/com-Orkut.html
+  下载: https://snap.stanford.edu/data/bigdata/communities/com-orkut.ungraph.txt.gz
+  本地: data/com-orkut.ungraph.txt
+  公开顶点数=3,072,441; 公开原始边数=117,185,083; 原图有向=False
+  清洗后边数参考=117,185,083; 三角形数参考=627,584,181
+  用途: 可选大规模社交图；先检查主机内存和磁盘
+
+注意：W1 Amazon0302不是C1 com-Amazon。W2文件名是Wiki-Vote.txt（大小写敏感）。
+W4源页边数16518948，而论文清洗后16518947，必须实际清洗确认，不手改输入迎合计数。
+TRUST会移除孤立点，我们的实现保留端点声明的顶点；顶点数不一定能逐项照抄。
+X1有约1.17亿条边；主机清洗的边对、编号表和排序缓冲可能比最终GPU CSR占用大很多。
+先检查内存和磁盘；未测得峰值前不承诺固定内存需求或运行时间。
+
+合成图（独立解析计数公式；不是WeTriC论文原始数据）
+-------------------------------------------------
+
+[S1] clique_chain (core)
+  来源: course S1
+  参数: {"cliques": 512, "size": 32}
+  本地: data/generated/S1.txt
+  n=16,384; m=254,463; T=2,539,520
+  公式: n=c*k; m=c*C(k,2)+(c-1); T=c*C(k,3)
+  用途: 课程原始团链；较短的团内查询
+
+[S2] grid (core)
+  来源: course S2
+  参数: {"cols": 1024, "rows": 1024}
+  本地: data/generated/S2.txt
+  n=1,048,576; m=2,095,104; T=0
+  公式: n=r*c; m=r*(c-1)+(r-1)*c; T=0
+  用途: 课程四邻接网格；零三角形低度对照
+
+[S3] shared_hub (core)
+  来源: course S3
+  参数: {"groups": 65536, "size": 4}
+  本地: data/generated/S3.txt
+  n=262,145; m=655,360; T=655,360
+  公式: n=1+g*k; m=g*(C(k,2)+k); T=g*C(k+1,3)
+  用途: 课程共享枢纽；验证原始高度数不等于长向前邻居表
+
+[S4] clique_chain (core)
+  来源: self-designed mechanism experiment
+  参数: {"cliques": 128, "size": 128}
+  本地: data/generated/S4.txt
+  n=16,384; m=1,040,511; T=43,696,128
+  公式: n=c*k; m=c*C(k,2)+(c-1); T=c*C(k,3)
+  用途: 增大团内交集；更多warp协作机会
+
+[S5] clique_chain (core)
+  来源: self-designed mechanism experiment
+  参数: {"cliques": 32, "size": 512}
+  本地: data/generated/S5.txt
+  n=16,384; m=4,186,143; T=711,639,040
+  公式: n=c*k; m=c*C(k,2)+(c-1); T=c*C(k,3)
+  用途: 更长交集；观察阈值和单线程长任务
+
+[S6] mixed_cliques (core)
+  来源: self-designed mechanism experiment
+  参数: {"large_count": 4, "large_size": 256, "small_count": 70235, "small_size": 8}
+  本地: data/generated/S6.txt
+  n=562,904; m=2,097,140; T=14,987,240
+  公式: n=a*p+b*q; m=a*C(p,2)+b*C(q,2); T=a*C(p,3)+b*C(q,3)
+  用途: 固定近似边预算，小团与大团不相交；较少大团；不声称重边比例已测
+
+[S7] mixed_cliques (core)
+  来源: self-designed mechanism experiment
+  参数: {"large_count": 32, "large_size": 256, "small_count": 37595, "small_size": 8}
+  本地: data/generated/S7.txt
+  n=308,952; m=2,097,140; T=90,537,960
+  公式: n=a*p+b*q; m=a*C(p,2)+b*C(q,2); T=a*C(p,3)+b*C(q,3)
+  用途: 固定近似边预算，小团与大团不相交；较多大团；不声称重边比例已测
+
+[X2] clique_chain (extended)
+  来源: self-designed mechanism experiment
+  参数: {"cliques": 8, "size": 1024}
+  本地: data/generated/X2.txt
+  n=8,192; m=4,190,215; T=1,427,464,192
+  公式: n=c*k; m=c*C(k,2)+(c-1); T=c*C(k,3)
+  用途: 可选长交集压力图；与S5边数接近而团更大
+
+构造细节：
+* 团链的每个团先构造完整无向边，连续团的第一个顶点之间只加一条桥边；桥不产生三角形。
+* 网格只连接右侧和下侧顶点，每条无向边写一次；没有对角边。
+* 共享枢纽只有一个0号点；每组内部为K4，全部连到枢纽；组间无边，每组与枢纽形成K5。
+* 混合图为互不相交的小团K8和大团K256，没有跨团边。S6/S7边数相同，团规模构成不同。
+  不把“大团比例”直接当作“重任务比例”，重任务须按定向后的min(|F(u)|,|F(v)|)重新统计。
+* 文件按确定性的构造顺序输出，没有随机洗牌/重编号；顺序可能影响任务局部性，论文需说明。
+* 增大团大小会同时改变顶点数、边数、三角形数和任务长度；S4/S5不是单一变量严格对照。
+
+论文来源与Graph500扩展
+---------------------
+WeTriC: Wedge-Parallel Triangle Counting for GPUs, Euro-Par 2025 proceedings.
+论文 https://davidbader.net/publication/2025-scbv/2025-scbv.pdf
+代码 https://github.com/jeffreyspaan/wedge-parallel-triangle-counting
+实验资料 https://doi.org/10.5281/zenodo.15611508
+本套采用其Table 3中的roadNet-CA、Amazon0302、wiki-vote、soc-epinions1、cit-patents。
+WeTriC主要对照采用GPU执行时间，10次平均；不能直接与我们的含预处理完整时间对比。
+
+TRUST: Triangle Counting Reloaded on GPUs, TPDS 2021.
+论文 https://pasalabs.org/papers/2021/TPDS21_triangle_counting.pdf
+代码 https://github.com/wzbxpy/TRUST
+本套采用其Table 2中的Cit-Patents，可选Orkut；并不声称复现了该论文完整数据集或性能。
+
+Graph500列为后续扩展，当前14图不含Graph500：
+标准参考实现 https://github.com/graph500/graph500
+WeTriC采用scale18~23、edge factor16、(a,b,c,d)=(0.57,0.19,0.19,0.05)。
+后续需要固定生成器版本、随机种子、导出边表方式及清洗哈希。
+同为scale18的其他下载图，边因子和种子可能不同，不能直接当作论文的G18。
+当前自制团链/混合图不是Graph500，也没有冒用Graph500名称。
+
+运行与记录
+----------
+1. 首次准备后先核对总数；S1~S7用已知公式，真实图用独立参考与公开计数交叉检查。
+2. 每个GPU版本使用相同输入、预处理参数、设备和计时边界；保存原始JSON和输入SHA256。
+3. 主指标first_total_ms，辅助first_count_reduce_ms，后者必须包括分流和全部计数/归约。
+4. 不同GPU各自重跑baseline；不能跨设备相除求优化加速比。
+5. 这是探索集，已有图已参与调参。正式论文前另行确定调参/评测划分、参数和重复次数。
+
+批量输入列表（避免data/*.txt把本benchmark.txt当作边表）
+-------------------------------------------------------
+mkdir -p results/raw
+python3 scripts/prepare_benchmark.py paths --suite core > results/benchmark-inputs.txt
+mapfile -t graphs < results/benchmark-inputs.txt
+CUDA_VISIBLE_DEVICES=0 python3 scripts/benchmark_scheduling.py \
+  --build build-lab --threads 32 --runs 3 --thresholds 16 32 64 \
+  --inputs "${graphs[@]}" --out results/raw/benchmark_explore_01
+
+这是14图×5配置×3次=210个独立完整进程；建议先只选几张完成探索。
+例如把paths命令改为：
+python3 scripts/prepare_benchmark.py paths --ids C2 W2 S1 S5 S6 S7 > results/benchmark-inputs.txt
+--threads是CPU预处理线程数，租用实例时按可用CPU资源调整；它不是CUDA线程数。
+输出目录必须不存在，避免覆盖旧实验。文件清单与参数以data/benchmark.json为机器可读来源。

@@ -14,6 +14,8 @@ P09 并行计算课程项目。目标是实现无向图的精确三角形计数�
 
 **新增 GPU 调度探索：[warp 协作与轻重分流指南](docs/warp_scheduling.md)。** `tc_gpu_warp` 为每条边分配一个 warp；`tc_gpu_split` 为轻边分配线程、重边分配 warp。附统一对比脚本，保持预处理相同，计入队列和额外启动成本。
 
+**评测集：[data/benchmark.txt](data/benchmark.txt) · [机器可读清单](data/benchmark.json) · [准备脚本](scripts/prepare_benchmark.py)。** 主集为7张真实图和7张合成图，选图参考WeTriC/TRUST与课程要求；含下载链接、确定性构造和精确计数公式，大型边表不入Git。
+
 ## 阅读导航
 
 - [项目解决什么问题](#1-项目解决什么问题)
@@ -91,6 +93,9 @@ CPU 与 GPU 使用同一个串行计数函数。区别在于 CPU 直接访问内
 | `src/cuda/warp_kernels.cuh`、`src/common/warp_tasks.hpp` | warp 查询分片、轻重分流、设备任务队列 | 新增探索实现 |
 | `tests/test_warp_tasks.cpp`、`tests/check_warp.py` | CPU任务覆盖和GPU队列/阈值/重复运行验证 | CPU已通过，GPU待运行 |
 | `scripts/benchmark_scheduling.py` | 相同预处理下对比 edge/warp/split，独立进程、保存原始JSON | 新增 |
+| `data/benchmark.txt`、`benchmark.json` | 14图探索主集、2图可选扩展，来源/用途/参考计数 | 新增 |
+| `scripts/prepare_benchmark.py` | 下载、流式解压、合成、输出批量输入清单 | 新增 |
+| `tests/test_benchmark_data.py` | 小图独立枚举、精确公式、确定性生成、gzip损坏清理 | 已通过 |
 | `docs/warp_scheduling.md` | 新入口原理、编译测试、阈值及计时解释 | 新增 |
 | `tests/check_baseline.py` | 新基线的课程样例、块边界和重复运行测试 | 需在 GPU 上执行 |
 | `tests/test_edge_binary.cpp` | 二分交集和跨步任务覆盖的 CPU 检查 | 本地已通过 |
@@ -615,3 +620,14 @@ CUDA_VISIBLE_DEVICES=0 python3 scripts/benchmark_scheduling.py \
 ```
 
 完整说明见 [warp 调度指南](docs/warp_scheduling.md)。当前论文和历史表格尚未加入新入口的性能结论。
+
+### 准备更多评测图
+
+```bash
+# 原有3张真实图已在data时，只下载新增的论文图
+python3 scripts/prepare_benchmark.py download --ids W1 W2 W3 W4
+# 生成全部7张合成图；参数和公式见data/benchmark.txt
+python3 scripts/prepare_benchmark.py generate --suite core
+```
+
+下载/生成不属于计数耗时。输入仍由程序统一清洗，清洗耗时计入完整任务；新增图先核对正确性，再比较性能。不要把 `data/benchmark.txt` 当作边表，也不要直接对 `data/*.txt` 通配运行。
