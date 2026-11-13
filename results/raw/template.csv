@@ -1,1 +1,0 @@
-run_id,commit_sha,input_sha256,dataset,n,m,variant,threshold,block_size,repeat_index,triangles,preprocessing_ms,classification_ms,h2d_ms,initialization_ms,count_kernel_ms,reduction_ms,d2h_ms,e2e_ms,full_with_io_ms,peak_device_bytes,status

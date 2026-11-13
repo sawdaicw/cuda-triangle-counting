@@ -20,3 +20,8 @@ results/figures/
 *.synctex.gz
 *.xdv
 paper/build/
+
+# Selected reproducible result archives/figures are tracked; extracted bytes are not
+!results/a100_v1/raw/a100_results_v1.tar.gz
+!results/a100_v1/summary/speedup_overview.pdf
+results/a100_v1/work/

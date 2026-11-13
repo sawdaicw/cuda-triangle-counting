@@ -61,7 +61,32 @@ def main():
     table('thread_scaling.tex','组合预处理的高线程数扫描（中位数，ms）','tab:threads','rrrr',
           ['线程数','Amazon','roadNet-CA','web-Google'],rows,
           '每配置每图3次；仅使用同一轮8/16/32/64线程扫描，不与早期2/4/8轮次混合。')
-    print('Validated aggregate counts/ranges and speedups; generated 3 LaTeX tables')
+    a100 = ROOT / 'results/a100_v1/summary/all_metrics.csv'
+    with a100.open(encoding='utf-8-sig', newline='') as stream:
+        measured = list(csv.DictReader(stream))
+    indexed = {(r['id'], r['variant']): r for r in measured}
+    ids = ['C1','C2','C3','W1','W2','W3','W4','S1','S2','S3','S4','S5','S6','S7']
+    variants = ['edge','warp','split16','split32','split64']
+    if len(measured) != 70 or len(indexed) != 70 or any(int(r['n']) != 20 for r in measured):
+        raise ValueError('A100 group/sample count mismatch')
+    for metric, suffix, caption in [
+        ('first_count_reduce_ms', 'gpu', 'A100调度对照：GPU计数阶段'),
+        ('first_total_ms', 'full', 'A100调度对照：完整任务')]:
+        rows = []
+        for graph in ids:
+            base = float(indexed[graph, 'edge'][metric + '_median'])
+            ratios = []
+            for variant in variants[1:]:
+                row = indexed[graph, variant]
+                ratio = base / float(row[metric + '_median'])
+                if not math.isclose(ratio, float(row[metric + '_speedup']), rel_tol=1e-12):
+                    raise ValueError('A100 speedup mismatch')
+                ratios.append(f'{ratio:.3f}')
+            rows.append([graph, f'{base:.4f}' if suffix == 'gpu' else f'{base:.3f}', *ratios])
+        table(f'a100_{suffix}.tex', caption, f'tab:a100_{suffix}', 'lrrrrr',
+              ['图','edge/ms','warp比值','split16比值','split32比值','split64比值'], rows,
+              '每图每配置20次独立进程；时间为中位数，比值为edge中位数除以对应配置中位数。大于1为更快。Wiki-Vote默认blocks不同。')
+    print('Validated historical and A100 aggregates; generated 5 LaTeX tables')
 
 
 if __name__=='__main__': main()

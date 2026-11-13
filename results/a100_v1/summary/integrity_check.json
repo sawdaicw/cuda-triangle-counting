@@ -1,0 +1,276 @@
+{
+  "raw_samples": 1400,
+  "groups": 70,
+  "samples_per_group": 20,
+  "commands": 1400,
+  "verified_true": 1400,
+  "nonempty_stderr": [],
+  "identity_consistent": true,
+  "matches_reference_counts": true,
+  "summary_recomputed_matches": true,
+  "preprocess": "omp/omp/omp, requested and actual 12 threads",
+  "environment": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "OMP_DYNAMIC": "FALSE",
+    "OMP_PROC_BIND": null,
+    "OMP_PLACES": null,
+    "OMP_THREAD_LIMIT": null,
+    "OMP_WAIT_POLICY": "PASSIVE"
+  },
+  "source": "77a42904ac6724e2bed77697c3c9b30ba957afb5",
+  "patch": "Base source: 77a42904ac6724e2bed77697c3c9b30ba957afb5\nPatch: W2 download URL uses lowercase wiki-Vote.txt.gz\nUpstream fix: e619ef33abe393be8501d45e03c88737c5692c86\n",
+  "gpu": "A100-PCIE-40GB, CC8.0, CUDA runtime/driver12080",
+  "gpu_stage_profiled": false,
+  "cuda_setup_median_all_edge_samples_ms": 295.7394855,
+  "gpu_fraction_per_run_median_percent": 0.06335707611683816,
+  "gpu_fraction_per_run_max_percent": 3.472893589307027,
+  "block_counts": {
+    "com-amazon.ungraph.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "roadNet-CA.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "web-Google.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "amazon0302.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "Wiki-Vote.txt": {
+      "edge": [
+        394
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "soc-Epinions1.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "cit-Patents.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "S1.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "S2.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "S3.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "S4.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "S5.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "S6.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    },
+    "S7.txt": {
+      "edge": [
+        864
+      ],
+      "warp": [
+        864
+      ],
+      "split16": [
+        864
+      ],
+      "split32": [
+        864
+      ],
+      "split64": [
+        864
+      ]
+    }
+  },
+  "bootstrap": "10000 paired-by-round percentile resamples, ratio of medians, seed20261112, no multiplicity correction; exploratory intervals, not confirmatory testing",
+  "limitations": [
+    "Input graph bytes not included; hashes are recorded by runner but cannot be rehashed from this archive.",
+    "Executable hashes recorded; binaries and full build logs not included.",
+    "CPU model, clocks, temperature time series and exclusivity were not established by this archive.",
+    "No separate GPU stage profile in this formal batch.",
+    "W2 uses394 blocks for edge and864 for warp/split; launch geometry is not held fixed on W2.",
+    "One post-first GPU-only repeat per process is separate from20 complete samples."
+  ]
+}

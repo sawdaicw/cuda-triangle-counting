@@ -1,0 +1,59 @@
+{
+  "correctness": {
+    "graphs": 204,
+    "batch_configurations": 816,
+    "status": "PASS; CPU task-mapping model only, no CUDA validation"
+  },
+  "idealized_models": {
+    "S6": {
+      "original_order": {
+        "edges": 2097140,
+        "queries": 14987240,
+        "independent_query_rounds": 825590,
+        "local_flat_query_rounds": 496733,
+        "global_flat_query_rounds": 468352,
+        "nonempty_batches": 65536,
+        "batches_with_short_length_at_least_16": 4064,
+        "ideal_local_round_ratio": 1.6620397678430867,
+        "warning": "Equal-cost queries, free task mapping, no memory/cache/synchronization or GPU grid model. Ratio is NOT a GPU speedup prediction."
+      },
+      "shuffled_order": {
+        "edges": 2097140,
+        "queries": 14987240,
+        "independent_query_rounds": 6797105,
+        "local_flat_query_rounds": 499946,
+        "global_flat_query_rounds": 468352,
+        "nonempty_batches": 65536,
+        "batches_with_short_length_at_least_16": 54785,
+        "ideal_local_round_ratio": 13.595678333259992,
+        "warning": "Equal-cost queries, free task mapping, no memory/cache/synchronization or GPU grid model. Ratio is NOT a GPU speedup prediction."
+      },
+      "construction": "Exact disjoint mixed-clique lengths, source-ID then destination-ID order; no real-graph input or GPU run."
+    },
+    "S7": {
+      "original_order": {
+        "edges": 2097140,
+        "queries": 90537960,
+        "independent_query_rounds": 3852222,
+        "local_flat_query_rounds": 2859761,
+        "global_flat_query_rounds": 2829312,
+        "nonempty_batches": 65536,
+        "batches_with_short_length_at_least_16": 32512,
+        "ideal_local_round_ratio": 1.3470433368382881,
+        "warning": "Equal-cost queries, free task mapping, no memory/cache/synchronization or GPU grid model. Ratio is NOT a GPU speedup prediction."
+      },
+      "shuffled_order": {
+        "edges": 2097140,
+        "queries": 90537960,
+        "independent_query_rounds": 13036145,
+        "local_flat_query_rounds": 2861143,
+        "global_flat_query_rounds": 2829312,
+        "nonempty_batches": 65536,
+        "batches_with_short_length_at_least_16": 65536,
+        "ideal_local_round_ratio": 4.556271741747966,
+        "warning": "Equal-cost queries, free task mapping, no memory/cache/synchronization or GPU grid model. Ratio is NOT a GPU speedup prediction."
+      },
+      "construction": "Exact disjoint mixed-clique lengths, source-ID then destination-ID order; no real-graph input or GPU run."
+    }
+  }
+}

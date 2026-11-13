@@ -1,633 +1,143 @@
-# CUDA Triangle Counting：无向图三角形计数
+# CUDA Triangle Counting：单 GPU 精确三角形计数
 
-P09 并行计算课程项目。目标是实现无向图的精确三角形计数，逐步探索并行方法，并整理成课程论文。
+P09 并行计算课程项目。输入无向简单图，输出精确三角形总数。当前主线是 **OpenMP 图预处理 + CUDA 边并行计数**，并比较固定 warp 和轻重分流。
 
-**当前阶段：OpenMP并行预处理已完成A800上的真实图验证、单项消融、至64线程扫描及32线程组合版的20次完整流程对照；完整任务中位数加速约1.65×、3.31×、3.54×。以上历史结果使用相同GPU计数内核，汇总来自用户报告，属于探索性测量，原始逐次记录待归档。新加入固定warp协作和轻重分流两个实验入口，尚无GPU性能结果；动态warp局部调度仍待探索。**
+## 当前进展（2026-11-13）
 
-**晚上服务器测试请先看：[GPU 边并行基线测试指南](docs/baseline_testing.md)。** 里面有克隆、编译、完整验证、大图测试、计时边界和输出字段。现有串行版继续保留。
+- **已有实现**：CPU 串行、GPU 单线程、GPU 边并行 baseline、每边一个 warp、轻重边队列分流。
+- **历史预处理探索**：A800 上并行解析、映射、排序组合显著改善完整时间；历史汇总与本次 A100 数据分开保存。
+- **最新 A100 评测**：14 图 × 5 配置 × 20 次独立进程，1400 份原始结果全部 `verified=true`。固定 warp 在多数图上更慢；split16 在 S6/S7 的 GPU 计数阶段分别约 1.37×/1.19×加速。尚无全面胜出的调度方案。
+- **下一步探索**：warp 内虚拟查询池，将短表元素查询分配给线程。CPU 映射模型在 204 图、816 组配置上通过；**尚未实现 CUDA 原型，没有新 GPU 性能结论**。
 
-**预处理诊断：[分项计时与运行指南](docs/preprocess_profiling.md)**。CPU 入口和 GPU 边并行入口增加 `--profile-preprocess`，默认关闭；主评价仍为完整计数时间。
+| 现在想看什么 | 入口 |
+|---|---|
+| A100 实验配置、结果与限制 | [A100 第一轮结果](docs/a100_v1_results.md) |
+| 完整原始记录、CSV、图与复算 | [results/a100_v1](results/a100_v1/README.md) |
+| 查询级并行方案、正确性与风险 | [下一版设计](docs/query_parallel_exploration.md) |
+| 源码阅读顺序与文件职责 | [代码导航](docs/code_map.md) |
+| 输入、编号、定向、CSR、唯一计数原理 | [输入与算法](docs/input_and_algorithm.md) |
+| CUDA baseline 参数、验证和计时字段 | [基线测试指南](docs/baseline_testing.md) |
+| warp/split 实现及运行 | [调度指南](docs/warp_scheduling.md) |
+| OpenMP 开关与验证 | [预处理指南](docs/openmp_preprocessing.md) |
+| 14 图下载与合成 | [benchmark 清单](data/benchmark.txt) |
+| 论文 | [LaTeX 初稿](paper/README.md) |
 
-**本轮优化与运行命令：[OpenMP 预处理指南](docs/openmp_preprocessing.md)**。默认保留原版，三项优化可独立切换，用完整总时间评价组合收益。
+## 程序结构
 
-**实验整理与论文：[阶段性结果](docs/experiment_results.md) · [汇总CSV及来源](results/reported/README.md) · [LaTeX初稿](paper/README.md) · [论文提纲](paper/outline.md)。**
+统一流程：**读边表 → 去自环/重边 → 编号映射 → 无向度数 → 全序定向 → 排序向前 CSR → GPU 计数与归约 → 返回总数**。
 
-**新增 GPU 调度探索：[warp 协作与轻重分流指南](docs/warp_scheduling.md)。** `tc_gpu_warp` 为每条边分配一个 warp；`tc_gpu_split` 为轻边分配线程、重边分配 warp。附统一对比脚本，保持预处理相同，计入队列和额外启动成本。
-
-**评测集：[data/benchmark.txt](data/benchmark.txt) · [机器可读清单](data/benchmark.json) · [准备脚本](scripts/prepare_benchmark.py)。** 主集为7张真实图和7张合成图，选图参考WeTriC/TRUST与课程要求；含下载链接、确定性构造和精确计数公式，大型边表不入Git。
-
-## 阅读导航
-
-- [项目解决什么问题](#1-项目解决什么问题)
-- [整个程序怎样运行](#2-整个程序怎样运行)
-- [文件夹和文件的作用](#3-文件夹和文件的作用)
-- [输入数据格式](#4-输入数据格式)
-- [串行算法及其原理](#5-串行算法及其原理)
-- [编译与运行](#6-编译与运行)
-- [输出字段说明](#7-输出字段说明)
-- [已经完成的验证](#8-已经完成的验证)
-- [使用边界与后续工作](#9-使用边界与后续工作)
-- [代码与实验文件怎样保存](#10-代码与实验文件怎样保存)
-
-## 1. 项目解决什么问题
-
-给定一个无向图，计算有多少组不同的三个顶点两两相连。
-
-例如，边 `10—12`、`12—20`、`10—20` 同时存在，就形成一个三角形。一个三角形无论从哪个顶点开始观察，都只计一次。
-
-本项目当前统计的是**无向简单图**中的三角形：
-
-- 无向：`u v` 和 `v u` 表示同一条边。
-- 简单：自环删除，重复边合并。
-- 精确计数：不使用随机采样估计。
-
-如果输入是网页链接等有向数据，程序会忽略原始方向：只要任一方向的边存在，就保留一条无向边。因此结果不是原始有向图中的有向三角形数。
-
-## 2. 整个程序怎样运行
-
-当前提供六个入口：
-
-| 程序 | 在哪里计数 | 主要用途 |
+| 可执行文件 | 计数方式 | 保留用途 |
 |---|---|---|
-| `python/reference.py` | CPU，Python | 小图参考实现；可使用独立枚举算法核对 |
-| `tc_cpu_serial` | CPU，单线程 C++ | 串行性能基准和结果核对 |
-| `tc_gpu_serial` | GPU，单个 CUDA 线程 | 验证 CUDA 环境及 GPU 上的串行算法 |
-| `tc_gpu_edge_baseline` | GPU，多线程，边并行二分交集 | 优化版本的同 GPU 基线，已在 A800 上验证 |
-| `tc_gpu_warp` | GPU，一 warp 协作处理一条边，二分交集 | 新增探索实现，GPU 实测待完成 |
-| `tc_gpu_split` | GPU，轻边单线程、重边入队后 warp 协作 | 新增探索实现，阈值可调，GPU 实测待完成 |
+| `tc_cpu_serial` | CPU 双指针交集 | CPU 参考、预处理诊断；可选 OpenMP 预处理，计数仍串行 |
+| `tc_gpu_serial` | GPU 一个线程，双指针交集 | 环境与串行验证，非主要性能基线 |
+| `tc_gpu_edge_baseline` | 每线程处理边，短表元素在长表二分 | 同 GPU 主对照 |
+| `tc_gpu_warp` | 一个 warp 协作处理一条边 | 固定粒度对照 |
+| `tc_gpu_split` | 轻边线程计算，重边入队后 warp 计算 | 两阶段分流对照 |
 
-以下介绍已经验证的 GPU 串行版流程；新边并行基线的额外任务元数据、两级归约和计时见[测试指南](docs/baseline_testing.md)。
+GPU 并行入口共用 runner，块内 CUB BlockReduce、全局 DeviceReduce，计数为 64 位。当前没有自动策略选择、查询池 CUDA kernel、逐顶点计数或多 GPU 计数。
 
-GPU 串行版内部的职责如下：
+## 输入与计数原理
 
-| 顺序 | 执行位置 | 工作 |
-|---|---|---|
-| 1 | CPU | 读取文本、收集顶点、删除自环、合并重复边 |
-| 2 | CPU | 重映射顶点编号，计算无向度数 |
-| 3 | CPU | 按全序定向，构建排序后的向前邻居 CSR |
-| 4 | CPU → GPU | 将 CSR 复制到显存 |
-| 5 | GPU | 一个线程遍历全部定向边，求邻居交集并累加 |
-| 6 | GPU → CPU | 将最终的 64 位计数复制回来 |
-| 7 | CPU | 可选核验，输出 JSON |
-
-`serial_kernel<<<1, 1>>>` 表示只启动 **1 个线程块、每块 1 个线程**。这个单线程入口没有并行分配边；后续边并行入口使用多线程与两级归约。
-
-CPU 与 GPU 使用同一个串行计数函数。区别在于 CPU 直接访问内存，GPU 访问复制到显存中的数据。
-
-## 3. 文件夹和文件的作用
-
-| 路径 | 内容与作用 | 当前状态 |
-|---|---|---|
-| `README.md` | 项目入口说明，即本文 | 随项目进展更新 |
-| `CMakeLists.txt` | 告诉 CMake 如何构建 C++/CUDA 可执行文件 | 已可用 |
-| `src/common/graph.hpp` | `Graph` 数据结构、`read_graph` 预处理、`count_serial` 计数 | 核心实现 |
-| `src/cpu/serial.cpp` | CPU 程序入口、CPU 计时、输出 | 已实现 |
-| `src/common/preprocess.hpp`、`preprocess.cpp` | 快速/OpenMP 解析、编号映射、排序去重及开关 | 已完成真实图测量，见阶段性结果 |
-| `scripts/benchmark_preprocess.py` | 交替版本、独立进程采样与汇总；CPU 探索或 GPU 完整总时间 | 新增 |
-| `tests/preprocess_equivalence.cpp`、`check_preprocess_modes.py` | 逐项比较完整 CSR，检查分块、排序边界和错误行号 | 本地已通过 |
-| `src/common/profile_json.hpp` | 可选预处理分项计时的 JSON 输出 | 新增 |
-| `docs/preprocess_profiling.md` | 预处理诊断命令、阶段边界和评价口径 | 新增 |
-| `tests/check_preprocess_profile.py` | 开关诊断的结果一致性和时间核算检查 | CPU 已通过，GPU 待运行 |
-| `src/common/edge_binary.hpp` | 二分交集和边源点任务元数据 | 本地共享算法检查已通过 |
-| `src/cuda/edge_baseline.cu` | 三个边任务入口共用的执行/计时框架，编译期选择线程、warp、分流模式 | 原基线已验证，新模式待GPU实测 |
-| `src/cuda/warp_kernels.cuh`、`src/common/warp_tasks.hpp` | warp 查询分片、轻重分流、设备任务队列 | 新增探索实现 |
-| `tests/test_warp_tasks.cpp`、`tests/check_warp.py` | CPU任务覆盖和GPU队列/阈值/重复运行验证 | CPU已通过，GPU待运行 |
-| `scripts/benchmark_scheduling.py` | 相同预处理下对比 edge/warp/split，独立进程、保存原始JSON | 新增 |
-| `data/benchmark.txt`、`benchmark.json` | 14图探索主集、2图可选扩展，来源/用途/参考计数 | 新增 |
-| `scripts/prepare_benchmark.py` | 下载、流式解压、合成、输出批量输入清单 | 新增 |
-| `tests/test_benchmark_data.py` | 小图独立枚举、精确公式、确定性生成、gzip损坏清理 | 已通过 |
-| `docs/warp_scheduling.md` | 新入口原理、编译测试、阈值及计时解释 | 新增 |
-| `tests/check_baseline.py` | 新基线的课程样例、块边界和重复运行测试 | 需在 GPU 上执行 |
-| `tests/test_edge_binary.cpp` | 二分交集和跨步任务覆盖的 CPU 检查 | 本地已通过 |
-| `docs/baseline_testing.md` | 基线实现、完整计时口径和服务器命令 | 新增 |
-| `src/cuda/serial.cu` | 显存管理、传输、GPU 内核、CUDA 计时、可选核验 | 已实现 |
-| `src/cuda/README.md` | CUDA 实现的简要说明 | 已有 |
-| `python/reference.py` | Python 集合交集参考实现及独立三元组枚举 | 已实现 |
-| `tests/triangle.txt` | 含重复边、自环的示例输入，清洗后是一个三角形 | 已有 |
-| `tests/test_reference.py` | Python 参考程序的 4 项测试 | 已有 |
-| `tests/check_serial.py` | 调用编译后的程序，用独立枚举核对 76 个图并检查非法输入 | 已有 |
-| `docs/research_plan.md` | 早期研究计划 | 草案 |
-| `docs/experiment_protocol.md` | 正式实验的记录与比较约定 | 草案 |
-| `configs/experiments.json` | 早期实验配置模板 | 当前程序不会自动读取 |
-| `results/raw/template.csv` | 原始实验记录的表头模板 | 尚未填入正式结果 |
-| `paper/outline.md` | 课程论文提纲 | 草案 |
-| `.github/workflows/cpu-reference.yml` | GitHub Actions：运行 Python 测试、构建 CPU 程序并核对 | 不运行 GPU 测试 |
-| `data/` | 放下载或生成的原始图 | 按需创建，Git 忽略 |
-| `build/` | CMake 生成的构建文件和可执行文件 | 编译时生成，Git 忽略 |
-
-建议阅读源码的顺序：先看 `graph.hpp` 的 `read_graph` 和 `count_serial`，再看 `serial.cpp`，最后看 `serial.cu` 的数据传输与内核调用。
-
-早期计划中的 G0/G1/G2、线程/warp 分工和阈值均为候选设计，不代表当前已经实现或已经决定采用。
-
-## 4. 输入数据格式
-
-### 4.1 C++ / CUDA 接受的格式
-
-输入为**未压缩纯文本边列表**，每行两个整数，分别是一条边的两个端点：
+输入为未压缩两列整数边表；`#`/`%` 开头的整行是注释，无数据表头，无第三列或行尾注释。例如：
 
 ```text
-# 每行是一条无向边
+# 一个三角形
 10 20
-20 12
-12 10
-12 30
-20 30
+20 100
+10 100
 ```
 
-该图有 4 个顶点、5 条无向边和 2 个三角形。
+有向数据忽略方向：任一方向存在就保留无向边，删除自环、合并重边。原始有符号 64 位编号按数值映射为连续内部编号，**不是按读取顺序编号**。自环端点保留为顶点，因此可以用自环记录声明孤立点；没有端点记录的孤立点无法恢复。
 
-| 格式细节 | 当前行为 |
-|---|---|
-| 顶点编号 | 有符号 64 位整数，可为负数，也可不连续 |
-| 分隔符 | 空格或制表符等空白字符 |
-| 输入顺序 | 顶点和边均不必预先排序 |
-| 重复边、反向重复边 | 自动合并 |
-| 自环，如 `12 12` | 删除该边，但仍保留出现过的顶点 |
-| 空行 | 跳过 |
-| 整行注释 | 首个非空白字符为 `#` 或 `%` 时跳过 |
-| 行尾注释 | 不支持；边所在行只能有两个整数 |
-| 第三列权重 | 不支持，会报错 |
-| 超出有符号 64 位范围的编号 | 报错 |
-| `.gz` 压缩文件 | C++/CUDA 不直接支持，先解压 |
-| Matrix Market / 邻接矩阵 | 不直接支持，需先转换成两列边列表 |
-
-**不要添加不带注释的“顶点数 边数”文件头。** 例如首行 `4 5` 会被当成顶点 4 与顶点 5 之间的一条边，程序无法识别它是元信息。元信息应写成注释，如 `# Nodes: 4 Edges: 5`。
-
-只有出现在输入端点中的顶点才能被识别。没有任何输入记录的孤立点无法从边列表恢复；这不影响三角形数量，但影响输出的顶点总数。
-
-### 4.2 压缩数据如何使用
-
-例如已经取得 `data/web-Google.txt.gz`，可以保留压缩包并解压：
-
-```bash
-gzip -dk data/web-Google.txt.gz
-```
-
-然后给 C++/CUDA 程序传入 `data/web-Google.txt`。Python 参考 CLI 可以直接读取 `.gz`，但它主要用于核验，不作为大图高性能基准。
-
-## 5. 串行算法及其原理
-
-### 5.1 清洗并重映射编号
-
-先收集全部出现过的顶点。每条非自环边规范成 `(min(u,v), max(u,v))`，排序后去重。
-
-再把顶点原编号按数值排序，映射为从 0 开始的连续下标：
-
-| 原编号 | 内部下标 |
-|---:|---:|
-| 10 | 0 |
-| 12 | 1 |
-| 20 | 2 |
-| 30 | 3 |
-
-映射不改变连边关系，并保留原编号的大小次序。后续数组使用内部下标。
-
-### 5.2 定义一个全图一致的顶点顺序
-
-在清洗后的无向图上计算度数，按 `(degree, id)` 从小到大排列：
-
-- 度数小的顶点在前。
-- 度数相同，编号小的顶点在前。
-
-对于上面的 5 条边：
-
-| 顶点 | 无向度数 |
-|---:|---:|
-| 10 | 2 |
-| 12 | 3 |
-| 20 | 3 |
-| 30 | 2 |
-
-因此顺序为 `10 ≺ 30 ≺ 12 ≺ 20`。
-
-对每条无向边，让顺序靠前的顶点指向顺序靠后的顶点。这只是内部处理方式，输入图的统计语义仍然是无向图。
-
-任何固定全序都能保证后面不重复计数。选择度数优先，是为了倾向于减少高度数顶点的向前邻居数量，控制后续交集工作量。
-
-### 5.3 构建向前邻居表
-
-用 `F(u)` 表示顶点 `u` 通过上述定向边指向的顶点集合：
-
-| 顶点 | 向前邻居 F(u)，表内按编号排序 |
-|---:|---|
-| 10 | {12, 20} |
-| 12 | {20} |
-| 20 | {} |
-| 30 | {12, 20} |
-
-**边的方向按“度数、编号”确定，邻居表内部则按“编号”排序。** 前者保证唯一计数，后者方便双指针比较。
-
-### 5.4 对每条已有定向边求交集
-
-计数公式为：
+边按 `(无向度数, 编号)` 从小到大定向；每张向前邻接表**内部按编号排序**。两种排序用途不同。令 F(u) 为向前邻居：
 
 ```text
-triangles = Σ |F(u) ∩ F(v)|
-            对所有已有定向边 u → v 求和
+T = 对所有定向边 u→v 求和 |F(u) ∩ F(v)|
 ```
 
-不是对任意两个顶点求交集，必须先存在这条定向边。
+三角形 a≺b≺c 只在边 a→b 上由共同邻居 c 计入一次，不再除以 3 或 6。CPU/单线程 GPU 用双指针，三个并行 GPU 入口用短表遍历加长表二分。详细例子见[输入与算法](docs/input_and_algorithm.md)。
 
-例如：
+## 编译与正确性检查
 
-- 边 `10 → 12`：交集是 `{20}`，找到三角形 `{10,12,20}`。
-- 边 `30 → 12`：交集是 `{20}`，找到三角形 `{30,12,20}`。
-- 其余定向边的交集为空。
-
-最终计数是 2。
-
-### 5.5 为什么不会漏计，也不会重复计数
-
-任意一个三角形的三个顶点都能按全序写成 `a ≺ b ≺ c`。
-
-定向后，存在 `a → b`、`a → c`、`b → c`。处理 `a → b` 时，`c` 同时位于 `F(a)` 和 `F(b)`，因此这个三角形被计入。
-
-处理另外两条边时，这三个顶点无法再次作为该三角形的共同向前邻居组合。因此每个三角形恰好计入一次，**不需要再除以 3 或 6**。
-
-### 5.6 双指针怎样求交集
-
-两个邻居表都已经按编号升序排列。分别设置指针 `i`、`j`：
-
-1. 若 `A[i] < B[j]`，移动 `i`。
-2. 若 `A[i] > B[j]`，移动 `j`。
-3. 若相等，交集数量加一，同时移动两个指针。
-4. 任意一个表遍历完就结束。
-
-两个长度为 `a`、`b` 的表，求交集最多需要 O(a+b) 时间。
-
-串行计数的伪代码为：
-
-```text
-total = 0
-for 每个顶点 u:
-    for F(u) 中的每个顶点 v:
-        total += 双指针交集大小(F(u), F(v))
-return total
-```
-
-设向前度数为 `d⁺(u)`，计数阶段的时间上界可写为：
-
-```text
-O(n + m + Σ [d⁺(u) + d⁺(v)])
-           对所有定向边 u → v 求和
-```
-
-因此运行时间不仅取决于顶点数和边数，也取决于度数分布。这里没有包含输入解析、去重排序和构建 CSR 的成本。
-
-### 5.7 CSR 是什么，为什么这样存
-
-CSR（压缩行存储）用两个数组保存所有向前邻居表：
-
-- `neighbors`：把所有顶点的邻居表依次拼接。
-- `offsets`：记录每个顶点的邻居段从哪里开始，长度为 `n+1`。
-
-顶点 `u` 的邻居是区间 `neighbors[offsets[u] : offsets[u+1]]`，左闭右开。
-
-上例按内部下标 0、1、2、3 排列后：
-
-```cpp
-offsets   = {0, 2, 3, 3, 5};
-neighbors = {1, 2, 2, 1, 2};
-```
-
-例如内部顶点 3，也就是原顶点 30，它的邻居区间是 `[3,5)`，内容为内部顶点 `{1,2}`，对应原顶点 `{12,20}`。
-
-这比嵌套容器更方便整体复制到 GPU。存储类型为：
-
-| 内容 | 类型 | 每项字节数 |
-|---|---|---:|
-| 内部顶点下标 | `uint32_t` | 4 |
-| CSR 偏移 | `unsigned long long`，64 位 | 8 |
-| 三角形总数 | `unsigned long long`，64 位 | 8 |
-
-CSR 本身使用 O(n+m) 空间；读取和构建阶段还会使用端点、去重边、度数等临时 CPU 数组。
-
-## 6. 编译与运行
-
-以下命令均在**服务器 SSH 终端**执行，并假定当前目录为仓库根目录。
-
-### 6.1 已验证的环境
-
-2026-11-08，用户在租用服务器上完成编译和 GPU 小图测试：
-
-| 组件 | 版本 / 型号 |
-|---|---|
-| GPU | NVIDIA A100-PCIE-40GB |
-| NVIDIA 驱动 | 580.126.20 |
-| CUDA Toolkit / nvcc | 12.8 / 12.8.93 |
-| g++ | 11.4.0 |
-| CMake | 3.22.1 |
-| Python | 3.10.12 |
-| A100 编译架构 | 80 |
-
-`nvidia-smi` 中的 CUDA 版本表示驱动支持能力；实际用于编译的 Toolkit 版本以 `nvcc --version` 为准。
-
-### 6.2 首次编译
+需要 C++17、CMake、OpenMP；GPU 构建还需要 CUDA Toolkit。以下架构 80 适用于本项目使用的 A100/A800，其他卡按实际架构配置。
 
 ```bash
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
   -DCMAKE_CUDA_ARCHITECTURES=80
-
 cmake --build build -j 4
+
+python3 -m unittest discover -s tests -v
+ctest --test-dir build --output-on-failure
+python3 tests/check_baseline.py ./build/tc_gpu_edge_baseline
+python3 tests/check_warp.py ./build/tc_gpu_warp ./build/tc_gpu_split
 ```
 
-第一条配置编译器、优化模式和 GPU 架构，并将构建文件写入 `build/`。第二条正式编译、链接，生成：
-
-- `build/tc_cpu_serial`
-- `build/tc_gpu_serial`
-- `build/tc_gpu_edge_baseline`（新增边并行基线）
-
-`-j 4` 是最多同时执行 4 个编译任务，与计数时启动多少 GPU 线程无关。其他型号的 GPU 应使用其对应架构，不能一律照抄 80。
-
-修改 C++/CUDA 代码后，执行 `cmake --build build -j 4` 重新编译；代码不变时直接运行。更换编译器等配置时，建议使用新的构建目录。
-
-### 6.3 运行 GPU 单线程版
-
-```bash
-./build/tc_gpu_serial tests/triangle.txt --verify
-```
-
-`--verify` 会在结果回传后，额外在 CPU 上执行相同计数函数并核对。核对失败时程序报错并返回非零退出码。
-
-不加该选项，只运行 GPU 计数及必要的 CPU 预处理：
-
-```bash
-./build/tc_gpu_serial tests/triangle.txt
-```
-
-程序使用可见设备中的逻辑 GPU 0。如需选择物理卡，可以设置 `CUDA_VISIBLE_DEVICES`。
-
-### 6.4 运行 CPU 版和 Python 参考版
-
-```bash
-./build/tc_cpu_serial tests/triangle.txt
-python3 python/reference.py tests/triangle.txt --oracle
-```
-
-Python 的 `--oracle` 额外枚举三元组，仅允许不超过 100 个顶点。CPU C++ 入口不接受 `--verify` 参数；支持 `--profile-preprocess` 输出相同图预处理的分项时间。
-
-没有 CUDA 的机器可以只编译 CPU：
+实验室可显式指定 `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.9/bin/nvcc -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-13`，路径以实际安装为准。没有 CUDA 时使用：
 
 ```bash
 cmake -S . -B build-cpu -DTC_ENABLE_CUDA=OFF -DCMAKE_BUILD_TYPE=Release
 cmake --build build-cpu -j 4
-./build-cpu/tc_cpu_serial tests/triangle.txt
+python3 tests/check_serial.py ./build-cpu/tc_cpu_serial
 ```
 
-### 6.5 运行自动验证
+`check_serial.py` 使用独立枚举核对 76 个图并拒绝 3 个非法输入。大图的 `--verify` 使用同一 CSR 上的 CPU 双指针参考；它不能替代小图独立穷举。A100 原始结果包没有包含完整 GPU 单元测试日志，应区分核验记录与独立测试证据。
+
+## 运行与输出
 
 ```bash
-python3 -m unittest discover -s tests -v
-python3 tests/check_serial.py ./build/tc_cpu_serial
-python3 tests/check_serial.py ./build/tc_gpu_serial
+CUDA_VISIBLE_DEVICES=0 ./build/tc_gpu_edge_baseline \
+  data/com-amazon.ungraph.txt \
+  --parser omp --mapping omp --sort omp --threads 12 \
+  --verify --warmup 0 --repeat 1
 ```
 
-后两条分别验证编译后的 CPU / GPU 可执行文件。成功时输出：
+标准输出为一行 JSON：图规模、`triangles`、设备/启动配置、显式缓冲区字节数和计时；错误写入 stderr 并返回非零。12 线程是本轮云机器统一设置，不是所有机器的默认最优值。代码默认仍保留 legacy/fused/serial 预处理。
 
-```text
-PASS: 76 graphs match brute-force oracle; 3 malformed inputs rejected
-```
-
-## 7. 输出字段说明
-
-### 7.1 GPU 输出
-
-成功时，标准输出是一行 JSON。下面是 2026-11-08 用户在 A100 上运行示例图时提供的**一次实际输出**，为方便阅读进行了换行：
-
-```json
-{
-  "backend": "gpu_serial",
-  "blocks": 1,
-  "threads_per_block": 1,
-  "vertices": 3,
-  "undirected_edges": 3,
-  "triangles": 1,
-  "device_buffer_bytes": 52,
-  "preprocess_ms": 0.063963,
-  "h2d_ms": 0.025058,
-  "kernel_ms": 0.083968,
-  "d2h_ms": 0.022029,
-  "end_to_end_ms": 351.063,
-  "verified": true
-}
-```
-
-这是一次环境与正确性检查，不是正式重复实验结果；时间随运行条件变化，不应照抄为性能结论。
-
-| 字段 | 含义 |
+| 指标 | 用途与范围 |
 |---|---|
-| `backend` | `gpu_serial` 表示 GPU 单线程版 |
-| `blocks` | 启动的线程块数量，当前为 1 |
-| `threads_per_block` | 每块线程数量，当前为 1 |
-| `vertices` | 输入端点中出现的不同顶点数，包含仅出现于自环的顶点 |
-| `undirected_edges` | 删除自环、合并重复边之后的无向边数 |
-| `triangles` | 最终三角形数量 |
-| `device_buffer_bytes` | 程序申请的 CSR 与结果缓冲区字节数 |
-| `preprocess_ms` | CPU 读取、清洗、编号映射、定向及 CSR 构建耗时 |
-| `h2d_ms` | CPU 到 GPU 的数据复制耗时 |
-| `kernel_ms` | CUDA events 包围单次内核启动与执行所测得的时间 |
-| `d2h_ms` | GPU 到 CPU 的结果复制耗时 |
-| `end_to_end_ms` | 从读取文件前到结果回传后的总耗时 |
-| `verified` | 是否执行可选 CPU 核验并通过；没加 `--verify` 时为 false，不代表核验失败 |
+| `first_total_ms` | **主指标**：从读边表前到首次结果回传；包括必要预处理、元数据、CUDA 初始化、分配、传输、计数和归约 |
+| `first_count_reduce_ms` | GPU 辅助指标；包括所需队列清零、分类/入队、计数及归约 |
+| `preprocess_ms` / `cuda_setup_ms` | 解释完整时间，不把各阶段中位数直接相加 |
+| `count_reduce_ms_samples` | 图已加载后的额外 GPU 重复，与首次完整样本分开 |
+| `verified` / `verify_ms` | 额外 CPU 核验及其耗时，位于主计时之外 |
 
-所有 `_ms` 字段单位均为毫秒。
+`--warmup 0 --repeat 1` 表示首次完整执行之外还有一次 GPU-only 重复，**不代表一个进程产生两次完整样本**。下载、解压、编译、日志、额外核验与最后析构不计入主指标。计时细节见[实验协议](docs/experiment_protocol.md)。
 
-`end_to_end_ms` 还包含 CUDA 上下文初始化、显存分配和相关管理开销，因此通常不等于其他时间字段之和。它不包含可选 CPU 核验、JSON 输出和最后的资源析构。
-
-小图计算很快，初始化占比可能很大。评估整个程序看端到端时间，评估计数内核看内核时间，后续正式比较时应明确计时范围并重复测量。
-
-对于 n 个顶点、m 条清洗后的无向边，当前显式设备缓冲区大小为：
-
-```text
-8 × (n + 1) + 4 × max(m, 1) + 8 字节
-```
-
-即便没有边也分配至少一个邻居元素，避免零长度设备分配。该数字**不包含** CUDA 上下文、驱动及运行时额外显存，不能直接等同于 `nvidia-smi` 中的进程占用。
-
-### 7.2 CPU 和 Python 输出
-
-CPU C++ 输出字段为：
-
-| 字段 | 含义 |
-|---|---|
-| `backend` | `cpu_serial` |
-| `vertices`、`undirected_edges`、`triangles` | 与 GPU 版相同的图规模和计数语义 |
-| `preprocess_ms` | CPU 预处理时间 |
-| `count_ms` | CPU 串行计数时间 |
-
-Python 参考 CLI 输出 `vertices`、`undirected_edges`、`triangles`；加 `--oracle` 后额外输出独立枚举结果 `oracle`。
-
-C++/CUDA 读取失败、输入格式错误或 CUDA 调用失败时，向标准错误输出错误信息，并返回非零退出码，不会给出成功的 JSON。
-
-## 8. 已经完成的验证
-
-2026-11-08，用户已在上述 A100 环境完成：
-
-- CMake 配置与 CPU / CUDA 编译。
-- 示例图 GPU 计数，得到 `triangles = 1`，`--verify` 核对通过。
-- GPU 可执行文件的 37 个小图测试，全部与独立枚举结果一致。
-- 3 个非法输入测试，全部被拒绝。
-
-此前开发环境还完成了 C++ CPU 版的同一组 37 个图和 3 个非法输入检查，以及 Python 参考程序的 4 项测试。
-
-### 8.1 对齐课程要求的新增测试
-
-依据题目“调试样例”补齐 D1～D4，保留原有 37 个额外测试，并加入题目建议的 n=20、p=0.2 随机图：
-
-| 课程样例 | 构造 | 顶点数 | 清洗后边数 | 精确三角形数 |
-|---|---|---:|---:|---:|
-| D1 空图 | 空边列表 | 0 | 0 | 0 |
-| D1 单边图 | 一条边 | 2 | 1 | 0 |
-| D1 三顶点路径 | 0—1—2 | 3 | 2 | 0 |
-| D1 三顶点完全图 | K3 | 3 | 3 | 1 |
-| D2 完全图 | K5 | 5 | 10 | 10 |
-| D2 完全二部图 | K4,5 | 9 | 20 | 0 |
-| D2 星形 | 中心连接 8 个叶子 | 9 | 8 | 0 |
-| D3 断连图 | 不相交 K3、K4 和两个孤立点 | 9 | 9 | 5 |
-| D4 预处理 | (0,1)、(1,0)、重复 (0,1)、(1,2)、(2,0)、(2,2) | 3 | 3 | 1 |
-| 建议随机图 | n=20，每条无向边独立以概率 0.2 出现；种子 0～29 | 20 | 按种子生成 | 独立三元组枚举 |
-
-**孤立点表示：** 当前 CLI 没有独立顶点列表，D3 用 `7 7`、`8 8` 两条自环记录声明两个孤立点。程序保留端点、删除自环，最终图仍恰为 K3 + K4 + 两个孤立点，不增加有效边。随机图也用自环记录声明全部 20 个顶点。没有修改输入格式。
-
-新增 9 个指定图和 30 个建议随机图，加上原有 37 个图，共 **76 个图**。每个指定图同时核对人工给定的顶点数、边数、三角形数和独立枚举答案。脚本逐项打印样例名及实际结果，方便检查 D1～D4 是否覆盖。
-
-此次扩展已在开发环境的 C++ CPU 版及用户的 A100 GPU 单线程版上运行通过。**这些记录不代表新增边并行基线已经通过 GPU 验证。** 串行测试命令：
+## 准备与评测数据
 
 ```bash
-git pull --ff-only
-python3 tests/check_serial.py ./build/tc_gpu_serial
-```
-
-上述 76 图是已有串行验证集；新增边并行基线需要重新编译并执行 `tests/check_baseline.py`。三个真实图的串行运行记录见下文，边并行和OpenMP预处理的性能已整理至阶段性结果。
-
-### 8.2 原有 37 个额外测试包含哪些情况
-
-| 测试图 | 数量 | 预期三角形数 / 检查目标 |
-|---|---:|---|
-| 空图 | 1 | 0 |
-| 只有自环的图 | 1 | 0，保留顶点但删除边 |
-| 非连续编号的单个三角形 | 1 | 1 |
-| 完全图 K8 | 1 | 56，检查漏计和重复计数 |
-| 19 条边的星形图 | 1 | 0，检查高度数情况 |
-| 无对角线的四边形环 | 1 | 0，区分环与三角形 |
-| 负数和巨大编号、重复边、反向边、自环混合图 | 1 | 1，检查清洗和映射 |
-| 固定种子随机图 | 30 | 每图 16 个顶点；三角形数由独立枚举计算 |
-| **合计** | **37** | 全部核对顶点数、清洗后边数和三角形数 |
-
-随机图使用种子 0～29，每对顶点以 0.3 的概率连边，再加入部分反向重复边和一个自环；测试可重复。
-
-非法输入包括：第三列数据、非整数文本、超出有符号 64 位范围的编号。
-
-`--verify` 使用相同的计数逻辑核对 CPU/GPU 执行结果；`check_serial.py` 则枚举所有三元组检查三条边是否存在，是另一条独立的正确性核验路径。
-
-这些测试支持“小图验证通过”的结论，不代表所有图都经过验证。GPU 单线程版还已在用户 A100 上通过 Amazon、roadNet-CA、web-Google 的 CPU/GPU 核对，计数分别为 667129、120676、13391903；原始输出来自用户提供的运行记录。尚无 64 位超大计数压力测试；正式重复性能比较见阶段性结果。边并行基线随后也已在用户实验室 A800 上通过 76 图、边界/跨步/重复运行检查，以及三个真实图核验。新增预处理及GPU组合已有正式完整流程记录，见阶段性结果。
-
-## 9. 使用边界与后续工作
-
-- GPU 单线程版用于验证，不能充分利用整张 GPU，大图可能很慢。
-- 整张向前 CSR 常驻显存；目前没有分块、显存限额或超时控制选项。
-- CPU 预处理保留多个临时数组，峰值主存占用会高于最终 CSR 大小。
-- 原始 ID 使用有符号 64 位整数；内部顶点索引为 32 位，程序会拒绝超过当前顶点数限制的输入。
-- 总计数使用无符号 64 位整数，当前没有溢出检测。
-- 原有 GPU 单线程入口每次只计数一次。新增边并行入口提供首次完整计数和预热后重复执行两种记录，详见基线测试指南。
-- 现有串行版已通过小图和三个真实图；边并行基线也已完成 A800 验证；下一步用新增分项计时定位预处理热点，再在服务器验证新增 OpenMP 预处理模式；局部调度留作后续。
-- 后续主要性能对照为同一 GPU 上的边并行基线与优化版，比较包含必要预处理、任务元数据、传输和归约的总时间。CPU 串行结果单列，不替代 GPU 同硬件对照。
-
-研究材料见 [研究计划](docs/research_plan.md)、[实验协议](docs/experiment_protocol.md) 和 [论文提纲](paper/outline.md)。这些文件中的早期设计应随探索结果调整。
-
-## 10. 代码与实验文件怎样保存
-
-在服务器拉取最新代码：
-
-```bash
-git pull --ff-only
-```
-
-自己修改后，先检查差异，再提交指定文件并推送：
-
-```bash
-git status
-git diff
-git add README.md
-git commit -m "Update project documentation"
-git push
-```
-
-上面只是提交 README 的例子，实际应把文件路径换成自己修改的源码或实验记录。**commit 只保存在当前机器，push 成功才保存到了 GitHub。**
-
-`data/`、`build/`、`build-*/` 和 `results/figures/` 等路径被 Git 忽略，不会自动上传。临时实例释放前，应推送源码和需要保留的结果文件；被忽略的数据或图表另行备份。Git 不会保存系统安装的 CUDA 等软件环境，因此正式实验也应记录环境版本。
-
-例如保存一次运行的 JSON：
-
-```bash
-mkdir -p results/raw
-./build/tc_gpu_serial tests/triangle.txt --verify > results/raw/triangle_gpu_serial.json
-```
-
-只在命令成功后将其作为有效结果，并记录输入、环境、命令和代码提交号。不要把尚未测量的结果填进模板。
-
-仓库尚未指定开源许可证；第三方代码和数据按各自条款使用。
-
-## 11. 本次新增：预处理诊断计时
-
-```bash
-./build-lab/tc_cpu_serial data/com-amazon.ungraph.txt --profile-preprocess
-```
-
-默认仍执行原流程；加参数后输出 `preprocess_profile`：读取解析与边规范化、顶点排序去重、边排序去重、编号映射与度数统计、定向与行长度统计、CSR 前缀和、CSR 填充、邻居段排序。保留 `unattributed_ms` 反映清理等未单列成本。未改变交集算法或并行任务分配。
-
-完整阶段定义、三个图的命令及测试见 [预处理诊断指南](docs/preprocess_profiling.md)。正式比较仍以从读取前到结果回传后的完整时间为主；诊断用于解释和选择优化方向。
-
-## 12. 本轮新增：OpenMP 预处理模式
-
-```bash
-./build-lab/tc_cpu_serial data/com-amazon.ungraph.txt \
-  --parser omp --mapping omp --sort omp --threads 8 \
-  --profile-preprocess --check-csr
-```
-
-三项可分别开启，默认 `--parser legacy --mapping fused --sort serial` 调用原版。新解析有快速单线程对照，映射有拆分单线程对照；去重检查全局前驱，跨线程块重复不会遗漏。度数统计及定向/CSR/最终邻居段排序保持串行，GPU 计数及归约不变。
-
-解析细节、主存成本、精确 CSR 测试，以及 3 次探索/20 次完整 GPU 时间的脚本见 [OpenMP 预处理指南](docs/openmp_preprocessing.md)。开启 `--check-csr` 会在计时后额外构建原版 CSR 比较；关闭时不做该额外验证。此前实验结果保留，新增模式不预先声称加速。
-
-## 13. 已报告完整流程主结果
-
-同一A800、相同GPU计数内核；每版每图20次独立完整运行，比较 first_total_ms 的中位数。
-
-| 数据集 | 基础版/ms | 32线程预处理优化版/ms | 完整任务加速比 |
-|---|---:|---:|---:|
-| Amazon | 933.250 | 566.650 | 1.65× |
-| roadNet-CA | 3255.282 | 984.945 | 3.31× |
-| web-Google | 3677.514 | 1038.127 | 3.54× |
-
-完整计时包括读取、必要预处理、OpenMP准备、CUDA初始化、显存分配、传输、计数与归约。不是内核加速比。3次探索与20次正式比较分别记录，不混合不同轮次；32线程为同批数据上选定的统一配置，不声称全局最优。
-
-数据来自用户贴出的终端汇总，原始120份逐次JSON尚未提交；不由摘要反推箱线图或置信区间。CSV、环境、版本及限制见 [实验结果说明](docs/experiment_results.md)。LaTeX第一节为“问题定义”，第二节为“图预处理与精确计数流程”；表格由CSV生成。
-
-### GPU 调度探索的快速入口
-
-重新运行 CMake 和构建后，会增加 `tc_gpu_warp`、`tc_gpu_split`；原来的三个 C++/CUDA 程序仍保留。先做正确性检查，再做探索对比：
-
-```bash
-CUDA_VISIBLE_DEVICES=0 python3 tests/check_warp.py \
-  ./build-lab/tc_gpu_warp ./build-lab/tc_gpu_split
-
-CUDA_VISIBLE_DEVICES=0 python3 scripts/benchmark_scheduling.py \
-  --build build-lab --threads 32 --runs 3 \
-  --thresholds 16 32 64 --out results/raw/warp_explore_01
-```
-
-完整说明见 [warp 调度指南](docs/warp_scheduling.md)。当前论文和历史表格尚未加入新入口的性能结论。
-
-### 准备更多评测图
-
-```bash
-# 原有3张真实图已在data时，只下载新增的论文图
-python3 scripts/prepare_benchmark.py download --ids W1 W2 W3 W4
-# 生成全部7张合成图；参数和公式见data/benchmark.txt
+python3 scripts/prepare_benchmark.py download --suite core
 python3 scripts/prepare_benchmark.py generate --suite core
 ```
 
-下载/生成不属于计数耗时。输入仍由程序统一清洗，清洗耗时计入完整任务；新增图先核对正确性，再比较性能。不要把 `data/benchmark.txt` 当作边表，也不要直接对 `data/*.txt` 通配运行。
+主集包括 7 张真实图和 7 张确定性合成图；原始大图不提交 Git。`data/benchmark.txt` 是说明文档，不能作为图输入，不要用 `data/*.txt` 盲目运行。下载地址已修正 SNAP 的 `wiki-Vote.txt.gz` 大小写，保存名仍为 `Wiki-Vote.txt`。
+
+统一比较入口为 `scripts/benchmark_scheduling.py`。A100 这轮固定 12 线程预处理、20 次独立进程、阈值 16/32/64、256 线程/块，逐轮打乱顺序。复算已有结果无需 GPU，见[归档说明](results/a100_v1/README.md)。
+
+## 最新结果应怎样理解
+
+| 图 | baseline GPU计数/ms | warp/ms | split16/ms |
+|---|---:|---:|---:|
+| roadNet-CA | 0.1173 | 1.0752 | 0.1349 |
+| S2 网格 | 0.0963 | 1.1577 | 0.1118 |
+| S5 大团链 | 22.7226 | 22.6665 | 26.6398 |
+| S6 混合图 | 0.8289 | 1.1653 | 0.6048 |
+| S7 混合图 | 3.5839 | 3.2515 | 3.0122 |
+
+以上均为 20 次首次 GPU 计数阶段中位数，包含分流和归约。完整时间的变化较小，预处理与 CUDA 准备波动不能归功于 GPU 调度。Wiki-Vote baseline 使用 394 blocks，其余配置 864 blocks，需要补充相同启动网格的对照。全部 14 图和不确定性见[完整报告](results/a100_v1/summary/analysis.md)。
+
+历史 A800 的 1.65×/3.31×/3.54×是**预处理优化的完整任务加速**，不是本轮 GPU 调度收益，不与 A100 数值混算。
+
+## 后续研究与边界
+
+先验证批内查询平铺能否减少拖尾、避免全局队列，再研究任务定位摊薄和低成本选择；不预先认定新方案优于 baseline。查询级思想与 WeTriC 等已有研究相关，不作为首次提出的概念。见[研究计划](docs/research_plan.md)。
+
+当前整张 CSR 常驻显存，没有 out-of-core、显存限额或自动超时。内部顶点32位、偏移和计数64位；计数溢出尚未检测。CPU临时数组也占主存。仓库尚未指定开源许可证，第三方资料遵循各自条款。
+
+## 保存与更新
+
+代码更新后重新编译；本地源码有 Git 元数据时才可使用 `git pull --ff-only`。下载 ZIP 解压的目录不能直接 pull，可另下载新版本并复制需要保留的数据和结果。GitHub 网络阻塞时，优先在本地下载后通过 SCP 上传，不依赖第三方镜像。
+
+实验原始记录需在释放实例前另行备份；源码、文档和特选结果提交到 Git。自动生成的构建目录、大图、解压后的实验工作目录不提交。原始 A100 结果包已作为小型复现归档保存于 `results/a100_v1/raw/`。
