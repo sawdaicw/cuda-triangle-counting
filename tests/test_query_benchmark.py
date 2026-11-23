@@ -23,7 +23,7 @@ class QueryBenchmarkChecks(unittest.TestCase):
             include=Path(directory)
             for name in ['cuda_runtime.h','cub/block/block_reduce.cuh','cub/device/device_reduce.cuh']:
                 stub=include/name;stub.parent.mkdir(parents=True,exist_ok=True);stub.write_text('')
-            for mode in range(4):
+            for mode in range(5):
                 result=subprocess.run(['g++','-std=c++17','-E','-x','c++',
                     '-I',str(include),f'-DTC_EDGE_MODE={mode}',str(ROOT/'src/cuda/edge_baseline.cu')],
                     text=True,capture_output=True,check=True)
@@ -32,6 +32,12 @@ class QueryBenchmarkChecks(unittest.TestCase):
                     self.assertIn('count_query_batches<false>',result.stdout)
                 else:
                     self.assertNotIn('count_query_batches',result.stdout)
+                if mode==4:
+                    self.assertIn('launch_query_v2<true>',result.stdout)
+                    self.assertIn('launch_query_v2<false>',result.stdout)
+                else:
+                    self.assertNotIn('count_query_v2',result.stdout)
+                    self.assertNotIn('launch_query_v2',result.stdout)
 
     def test_diagnostic_oracle(self):
         triangle = [(0,1),(1,2),(0,2)]

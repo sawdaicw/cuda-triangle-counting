@@ -1,18 +1,20 @@
 # CUDA Triangle Counting：单 GPU 精确三角形计数
 
-P09 并行计算课程项目。输入无向简单图，输出精确三角形总数。当前主线是 **OpenMP 图预处理 + CUDA 边并行计数**，并比较固定 warp、轻重分流和实验性的自适应查询池。
+P09 并行计算课程项目。输入无向简单图，输出精确三角形总数。当前主线是 **OpenMP 图预处理 + CUDA 边并行计数**，并比较固定 warp、轻重分流和实验性查询池。新一轮探索两条路线：先执行后协作、成本评分后协作。
 
 ## 当前进展（2026-11-23）
 
 - **已有实现**：CPU 串行、GPU 单线程、GPU 边并行 baseline、每边一个 warp、轻重边队列分流。
 - **历史预处理探索**：A800 上并行解析、映射、排序组合显著改善完整时间；历史汇总与本次 A100 数据分开保存。
 - **最新 A100 评测**：14 图 × 5 配置 × 20 次独立进程，1400 份原始结果全部 `verified=true`。固定 warp 在多数图上更慢；split16 在 S6/S7 的 GPU 计数阶段分别约 1.37×/1.19×加速。尚无全面胜出的调度方案。
-- **新增实验原型**：`tc_gpu_query` 提供 scalar / pool / adaptive 三模式，短任务快速路径与工作量评分门控，保持原查询集合。host 策略/映射及 CPU 回归已检查；**用户已在 A100 成功编译链接 query 入口；共享 runner 的其他后端编译隔离已修复。GPU 正确性/性能仍待验证，默认评分参数未校准**。见[实验指南](docs/adaptive_query_v1.md)。
+- **新增 v2 源码**：`tc_gpu_query_v2` 支持 budget（先独立执行 K 次，再协作剩余查询）和 score（比较独立/协作成本后选择），各模式分别编译；旧 v1 保留。host 查询覆盖/策略及 Python 回归检查通过，**v2 尚未 CUDA 编译或实测，默认评分参数未校准**。见[v2 指南](docs/query_v2.md)。
+- **v1 用户探索**：已在 A100 通过正确性并回传 14 图×4 配置×3 次初步结果；S7 有收益信号，Google/均匀大团仍有退化。六图诊断显示部分图评分很多、启用协作很少，不能据此认定新规则已经有效。
 
 | 现在想看什么 | 入口 |
 |---|---|
 | A100 实验配置、结果与限制 | [A100 第一轮结果](docs/a100_v1_results.md) |
 | 完整原始记录、CSV、图与复算 | [results/a100_v1](results/a100_v1/README.md) |
+| 两条新路线、K预算、成本评分与服务器验证 | [query v2 指南](docs/query_v2.md) |
 | 自适应查询池源码、参数、验证与评测 | [query v1 指南](docs/adaptive_query_v1.md) |
 | 查询级并行方案、正确性与风险 | [下一版设计](docs/query_parallel_exploration.md) |
 | 源码阅读顺序与文件职责 | [代码导航](docs/code_map.md) |
@@ -34,9 +36,10 @@ P09 并行计算课程项目。输入无向简单图，输出精确三角形总�
 | `tc_gpu_edge_baseline` | 每线程处理边，短表元素在长表二分 | 同 GPU 主对照 |
 | `tc_gpu_warp` | 一个 warp 协作处理一条边 | 固定粒度对照 |
 | `tc_gpu_split` | 轻边线程计算，重边入队后 warp 计算 | 两阶段分流对照 |
-| `tc_gpu_query` | 批内自适应一边一线程/虚拟查询池 | 新实验原型，待 CUDA 验证 |
+| `tc_gpu_query` | v1 批内评分/虚拟查询池 | 保留上一轮探索版本 |
+| `tc_gpu_query_v2` | 先执行后协作 / 成本评分后协作 | 新实验源码，待 CUDA 验证 |
 
-GPU 并行入口共用 runner，块内 CUB BlockReduce、全局 DeviceReduce，计数为 64 位。新增查询池采用固定启发式局部选择，尚未 GPU 校准；没有全图自动调优、逐顶点计数或多 GPU 计数。
+GPU 并行入口共用 runner，块内 CUB BlockReduce、全局 DeviceReduce，计数为 64 位。查询池 v2 探索两条局部协作路线，评分尚未 GPU 校准；没有全图自动调优、逐顶点计数或多 GPU 计数。
 
 ## 输入与计数原理
 
@@ -74,7 +77,8 @@ python3 -m unittest discover -s tests -v
 ctest --test-dir build --output-on-failure
 python3 tests/check_baseline.py ./build/tc_gpu_edge_baseline
 python3 tests/check_warp.py ./build/tc_gpu_warp ./build/tc_gpu_split
-python3 tests/check_query.py ./build/tc_gpu_query  # 新原型，先在服务器验证
+python3 tests/check_query.py ./build/tc_gpu_query
+python3 tests/check_query_v2.py ./build/tc_gpu_query_v2  # 新版先在服务器验证
 ```
 
 实验室可显式指定 `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.9/bin/nvcc -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-13`，路径以实际安装为准。没有 CUDA 时使用：
@@ -135,7 +139,7 @@ python3 scripts/prepare_benchmark.py generate --suite core
 
 ## 后续研究与边界
 
-新原型已加入源码，下一步先完成 CUDA 编译和正确性，再验证批内查询平铺能否减少拖尾、自动选择能否控制普通任务退化；不预先认定新方案优于 baseline。查询级思想与 WeTriC 等已有研究相关，不作为首次提出的概念。见[研究计划](docs/research_plan.md)。
+v2 两条路线已加入源码，下一步先验证新 CUDA 实现，再比较实际执行剩余工作与提前评分两种选择方式；不预先认定新方案优于 baseline。查询级思想与 WeTriC 等已有研究相关，不作为首次提出的概念。见[研究计划](docs/research_plan.md)。
 
 当前整张 CSR 常驻显存，没有 out-of-core、显存限额或自动超时。内部顶点32位、偏移和计数64位；计数溢出尚未检测。CPU临时数组也占主存。仓库尚未指定开源许可证，第三方资料遵循各自条款。
 
