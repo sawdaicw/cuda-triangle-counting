@@ -5,11 +5,14 @@
 | `src/common/graph.hpp` | Graph/CSR、原版读图、CPU双指针参考 |
 | `src/common/preprocess.*` | legacy/fast/OpenMP解析、编号映射、排序去重；共享预处理入口 |
 | `src/common/edge_binary.hpp` | GPU/CPU可共用二分交集、定向边源点元数据 |
+| `src/common/query_policy.hpp` | host/device 共用整数评分与门控，默认参数未校准 |
+| `src/cuda/query_kernels.cuh` | 虚拟查询池、快速路径、自适应批内调度与可选诊断 |
+| `scripts/benchmark_query.py` | 固定参数、相同网格的四模式完整进程对照 |
 | `src/common/warp_tasks.hpp` | 短表长度、lane不重叠查询切片 |
 | `src/common/profile_json.hpp` | 可选预处理诊断JSON |
 | `src/cpu/serial.cpp` | CPU串行计数入口；预处理可并行 |
 | `src/cuda/serial.cu` | GPU单线程验证；与主要并行性能结果分开 |
-| `src/cuda/edge_baseline.cu` | edge/warp/split共用CLI、分配、传输、归约与计时runner |
+| `src/cuda/edge_baseline.cu` | edge/warp/split/query共用CLI、分配、传输、归约与计时runner |
 | `src/cuda/warp_kernels.cuh` | 固定warp及轻边计算/重边入队kernel |
 | `scripts/prepare_benchmark.py` | 数据清单下载、解压、确定性合成 |
 | `scripts/benchmark_preprocess.py` | 预处理消融、线程扫描、完整预处理对照 |

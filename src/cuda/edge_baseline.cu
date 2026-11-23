@@ -5,12 +5,13 @@
 #include "../common/profile_json.hpp"
 #include "../common/preprocess.hpp"
 #include "../common/warp_tasks.hpp"
+#include "../common/query_policy.hpp"
 #include <memory>
 
 #ifndef TC_EDGE_MODE
 #define TC_EDGE_MODE 0
 #endif
-static_assert(TC_EDGE_MODE >= 0 && TC_EDGE_MODE <= 2, "Unknown edge backend");
+static_assert(TC_EDGE_MODE >= 0 && TC_EDGE_MODE <= 3, "Unknown edge backend");
 #include <chrono>
 #include <cmath>
 #include <iomanip>
@@ -44,7 +45,7 @@ struct Event {
     Event(const Event&) = delete;
     Event& operator=(const Event&) = delete;
 };
-struct Options { std::string input; int repeats = 10, warmup = 2, blocks = 0, threshold = 32; bool verify = false, profile_preprocess = false, profile_gpu = false; tc::PreprocessOptions preprocess; };
+struct Options { std::string input; int repeats = 10, warmup = 2, blocks = 0, threshold = 32; bool verify = false, profile_preprocess = false, profile_gpu = false; tc::PreprocessOptions preprocess; int query_mode = 2; bool query_diagnostics = false; tc::QueryPolicy query_policy; };
 int integer(const std::string& text, int low, int high) {
     if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos)
         throw std::runtime_error("Expected a nonnegative decimal integer: " + text);
@@ -54,13 +55,31 @@ int integer(const std::string& text, int low, int high) {
     return static_cast<int>(value);
 }
 Options parse(int argc, char** argv) {
-    if (argc < 2) throw std::runtime_error("Usage: " + std::string(argv[0]) + " INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N] (warp/split: --profile-gpu; split: --threshold N)");
+    if (argc < 2) throw std::runtime_error("Usage: " + std::string(argv[0]) + " INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N] (warp/split: --profile-gpu; split: --threshold N; query: --query-mode scalar|pool|adaptive --small N --pool-overhead N --pool-per-round N --pool-margin N --query-diagnostics)");
     Options o; o.input = argv[1];
     for (int i = 2; i < argc; ++i) {
         const std::string flag = argv[i];
         if (flag == "--verify") o.verify = true;
         else if (flag == "--profile-preprocess") o.profile_preprocess = true;
         else if (flag == "--profile-gpu" && TC_EDGE_MODE != 0) o.profile_gpu = true;
+        else if (flag == "--query-diagnostics" && TC_EDGE_MODE == 3) o.query_diagnostics = true;
+        else if (flag == "--query-mode" && TC_EDGE_MODE == 3) {
+            if (++i == argc) throw std::runtime_error("Missing value for " + flag);
+            const std::string value = argv[i];
+            if (value == "scalar") o.query_mode = 0;
+            else if (value == "pool") o.query_mode = 1;
+            else if (value == "adaptive") o.query_mode = 2;
+            else throw std::runtime_error("Unknown query mode: " + value);
+        }
+        else if (TC_EDGE_MODE == 3 && (flag == "--small" || flag == "--pool-overhead" ||
+                 flag == "--pool-per-round" || flag == "--pool-margin")) {
+            if (++i == argc) throw std::runtime_error("Missing value for " + flag);
+            const auto value = static_cast<unsigned>(integer(argv[i], 0, 65535));
+            if (flag == "--small") o.query_policy.small = value;
+            else if (flag == "--pool-overhead") o.query_policy.overhead = value;
+            else if (flag == "--pool-per-round") o.query_policy.per_round = value;
+            else o.query_policy.margin = value;
+        }
         else if (flag == "--threshold" && TC_EDGE_MODE == 2) {
             if (++i == argc) throw std::runtime_error("Missing value for " + flag);
             o.threshold = integer(argv[i], 1, std::numeric_limits<int>::max());
@@ -92,8 +111,10 @@ __global__ void count_edges(tc::Offset m, const tc::Offset* offsets,
     const tc::Count sum = Reduce(temp).Sum(local);
     if (threadIdx.x == 0) block_sums[blockIdx.x] = sum;
 }
-#if TC_EDGE_MODE != 0
+#if TC_EDGE_MODE == 1 || TC_EDGE_MODE == 2
 #include "warp_kernels.cuh"
+#elif TC_EDGE_MODE == 3
+#include "query_kernels.cuh"
 #endif
 struct Sample {
     float count_reduce_ms;
@@ -125,7 +146,7 @@ int main(int argc, char** argv) {
         cudaDeviceProp prop{}; check(cudaGetDeviceProperties(&prop, 0));
         int runtime = 0, driver = 0;
         check(cudaRuntimeGetVersion(&runtime)); check(cudaDriverGetVersion(&driver));
-        constexpr int tasks_per_block = TC_EDGE_MODE == 0 ? block_threads : block_threads / 32;
+        constexpr int tasks_per_block = (TC_EDGE_MODE == 0 || TC_EDGE_MODE == 3) ? block_threads : block_threads / 32;
         const auto needed = std::max<tc::Offset>(1, (graph.neighbors.size() + tasks_per_block - 1) / tasks_per_block);
         const int blocks = options.blocks ? options.blocks : static_cast<int>(
             std::min<tc::Offset>(needed, static_cast<tc::Offset>(prop.multiProcessorCount) * 8));
@@ -172,7 +193,7 @@ int main(int argc, char** argv) {
                 check(cudaGetLastError());
                 if (after_count) check(cudaEventRecord(after_count->data));
             }
-#else
+#elif TC_EDGE_MODE == 2
             {
                 // Reset and rebuild the queue on EVERY run, including warmups.
                 check(cudaMemsetAsync(queue_size->data, 0, sizeof(tc::Offset)));
@@ -184,6 +205,13 @@ int main(int argc, char** argv) {
                 // Always launch, even for an empty queue; no host count round-trip.
                 count_warp_edges<<<blocks, block_threads>>>(graph.neighbors.size(), d_offsets.data, d_neighbors.data, d_sources.data,
                     d_sums.data + blocks, queue->data, queue_size->data);
+                check(cudaGetLastError());
+                if (after_count) check(cudaEventRecord(after_count->data));
+            }
+#elif TC_EDGE_MODE == 3
+            {
+                count_query_batches<false><<<blocks, block_threads>>>(graph.neighbors.size(), d_offsets.data,
+                    d_neighbors.data, d_sources.data, d_sums.data, options.query_mode, options.query_policy);
                 check(cudaGetLastError());
                 if (after_count) check(cudaEventRecord(after_count->data));
             }
@@ -229,6 +257,21 @@ int main(int argc, char** argv) {
         const double median = sorted.size() % 2 ? sorted[k] : (sorted[k - 1] + sorted[k]) / 2;
         // Diagnostic readback is outside first_total_ms and GPU timing samples.
         const auto stats_begin = Clock::now();
+        tc::Offset query_stats[9] = {};
+        if constexpr (TC_EDGE_MODE == 3) {
+            if (options.query_diagnostics) {
+                Buffer<tc::Offset> counters(9);
+                check(cudaMemset(counters.data, 0, counters.bytes));
+                count_query_batches<true><<<blocks, block_threads>>>(graph.neighbors.size(), d_offsets.data,
+                    d_neighbors.data, d_sources.data, d_sums.data, options.query_mode, options.query_policy, counters.data);
+                check(cudaGetLastError());
+                check(cub::DeviceReduce::Sum(scratch.data, scratch_bytes, d_sums.data, d_result.data, static_cast<int>(sum_count)));
+                check(cudaMemcpy(query_stats, counters.data, sizeof(query_stats), cudaMemcpyDeviceToHost));
+                tc::Count diagnostic_count = 0;
+                check(cudaMemcpy(&diagnostic_count, d_result.data, sizeof(diagnostic_count), cudaMemcpyDeviceToHost));
+                if (diagnostic_count != first.count) throw std::runtime_error("Diagnostic pass count mismatch");
+            }
+        }
         tc::Offset heavy_edges = 0;
         if constexpr (TC_EDGE_MODE == 2)
             check(cudaMemcpy(&heavy_edges, queue_size->data, sizeof(heavy_edges), cudaMemcpyDeviceToHost));
@@ -242,7 +285,7 @@ int main(int argc, char** argv) {
         const std::size_t queue_bytes = queue ? queue->bytes + queue_size->bytes : 0;
         const std::size_t bytes = d_offsets.bytes + d_neighbors.bytes + d_sources.bytes + d_sums.bytes + d_result.bytes + scratch.bytes + queue_bytes;
         constexpr const char* backend = TC_EDGE_MODE == 0 ? "gpu_edge_binary" :
-            (TC_EDGE_MODE == 1 ? "gpu_warp_binary" : "gpu_split_binary");
+            (TC_EDGE_MODE == 1 ? "gpu_warp_binary" : (TC_EDGE_MODE == 2 ? "gpu_split_binary" : "gpu_query_binary"));
         std::cout << std::setprecision(10)
             << "{\"backend\":" << quote(backend) << ",\"input\":" << quote(options.input)
             << ",\"device\":" << quote(prop.name) << ",\"compute_capability\":" << quote(std::to_string(prop.major) + "." + std::to_string(prop.minor))
@@ -275,6 +318,10 @@ int main(int argc, char** argv) {
             write_samples("light_count_queue_ms_samples", light_samples);
             write_samples("warp_count_ms_samples", warp_samples);
             write_samples("global_reduce_ms_samples", reduce_samples);
+            if constexpr (TC_EDGE_MODE == 3) {
+                std::cout << ",\"first_query_count_ms\":" << first.warp_count_ms;
+                write_samples("query_count_ms_samples", warp_samples);
+            }
         }
         if constexpr (TC_EDGE_MODE == 2) {
             std::cout << ",\"threshold\":" << options.threshold << ",\"heavy_edges\":" << heavy_edges
@@ -282,6 +329,25 @@ int main(int argc, char** argv) {
                 << ",\"heavy_edge_fraction\":" << (graph.neighbors.empty() ? 0.0 : static_cast<double>(heavy_edges) / graph.neighbors.size())
                 << ",\"queue_capacity_edges\":" << graph.neighbors.size() << ",\"queue_buffer_bytes\":" << queue_bytes
                 << ",\"stats_readback_ms\":" << stats_ms;
+        }
+        if constexpr (TC_EDGE_MODE == 3) {
+            constexpr const char* modes[] = {"scalar", "pool", "adaptive"};
+            std::cout << ",\"query_mode\":" << quote(modes[options.query_mode])
+                << ",\"query_policy_version\":\"warp-query-v1-uncalibrated\""
+                << ",\"query_policy\":{\"small\":" << options.query_policy.small
+                << ",\"overhead\":" << options.query_policy.overhead
+                << ",\"per_round\":" << options.query_policy.per_round
+                << ",\"margin\":" << options.query_policy.margin << "}"
+                << ",\"query_diagnostics_enabled\":" << (options.query_diagnostics ? "true" : "false");
+            if (options.query_diagnostics) {
+                std::cout << ",\"query_diagnostics\":{\"batches\":" << query_stats[0]
+                    << ",\"fast_batches\":" << query_stats[1] << ",\"scalar_batches\":" << query_stats[2]
+                    << ",\"pool_batches\":" << query_stats[3] << ",\"nonempty_edges\":" << query_stats[4]
+                    << ",\"pooled_queries\":" << query_stats[5]
+                    << ",\"all_queries\":" << query_stats[6] << ",\"all_scores\":" << query_stats[7]
+                    << ",\"sum_batch_max_scores\":" << query_stats[8]
+                    << ",\"extra_device_buffer_bytes\":72,\"pass_ms\":" << stats_ms << "}";
+            }
         }
         if (options.profile_preprocess) {
             std::cout << ",\"preprocess_profile\":";
