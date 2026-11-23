@@ -258,7 +258,9 @@ int main(int argc, char** argv) {
         // Diagnostic readback is outside first_total_ms and GPU timing samples.
         const auto stats_begin = Clock::now();
         tc::Offset query_stats[9] = {};
-        if constexpr (TC_EDGE_MODE == 3) {
+#if TC_EDGE_MODE == 3
+        // Outside a template, if constexpr does not hide undeclared kernel names
+        // from the other backends. Exclude this launch during preprocessing.
             if (options.query_diagnostics) {
                 Buffer<tc::Offset> counters(9);
                 check(cudaMemset(counters.data, 0, counters.bytes));
@@ -271,7 +273,7 @@ int main(int argc, char** argv) {
                 check(cudaMemcpy(&diagnostic_count, d_result.data, sizeof(diagnostic_count), cudaMemcpyDeviceToHost));
                 if (diagnostic_count != first.count) throw std::runtime_error("Diagnostic pass count mismatch");
             }
-        }
+#endif
         tc::Offset heavy_edges = 0;
         if constexpr (TC_EDGE_MODE == 2)
             check(cudaMemcpy(&heavy_edges, queue_size->data, sizeof(heavy_edges), cudaMemcpyDeviceToHost));

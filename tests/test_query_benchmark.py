@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -14,6 +15,24 @@ spec.loader.exec_module(checks)
 
 
 class QueryBenchmarkChecks(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('g++'), 'g++ preprocessor unavailable')
+    def test_query_launch_is_excluded_from_other_backends(self):
+        # Preprocessing only: empty CUDA/CUB stubs do NOT compile or emulate CUDA.
+        # Catch accidental name lookup in discarded non-template constexpr paths.
+        with tempfile.TemporaryDirectory() as directory:
+            include=Path(directory)
+            for name in ['cuda_runtime.h','cub/block/block_reduce.cuh','cub/device/device_reduce.cuh']:
+                stub=include/name;stub.parent.mkdir(parents=True,exist_ok=True);stub.write_text('')
+            for mode in range(4):
+                result=subprocess.run(['g++','-std=c++17','-E','-x','c++',
+                    '-I',str(include),f'-DTC_EDGE_MODE={mode}',str(ROOT/'src/cuda/edge_baseline.cu')],
+                    text=True,capture_output=True,check=True)
+                if mode==3:
+                    self.assertIn('count_query_batches<true>',result.stdout)
+                    self.assertIn('count_query_batches<false>',result.stdout)
+                else:
+                    self.assertNotIn('count_query_batches',result.stdout)
+
     def test_diagnostic_oracle(self):
         triangle = [(0,1),(1,2),(0,2)]
         for mode in ['scalar','pool','adaptive']:
