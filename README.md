@@ -7,13 +7,16 @@ P09 并行计算课程项目。输入无向简单图，输出精确三角形总�
 - **已有实现**：CPU 串行、GPU 单线程、GPU 边并行 baseline、每边一个 warp、轻重边队列分流。
 - **历史预处理探索**：A800 上并行解析、映射、排序组合显著改善完整时间；历史汇总与本次 A100 数据分开保存。
 - **最新 A100 评测**：14 图 × 5 配置 × 20 次独立进程，1400 份原始结果全部 `verified=true`。固定 warp 在多数图上更慢；split16 在 S6/S7 的 GPU 计数阶段分别约 1.37×/1.19×加速。尚无全面胜出的调度方案。
-- **新增 v2 源码**：`tc_gpu_query_v2` 支持 budget（先独立执行 K 次，再协作剩余查询）和 score（比较独立/协作成本后选择），各模式分别编译；旧 v1 保留。host 查询覆盖/策略及 Python 回归检查通过，**v2 尚未 CUDA 编译或实测，默认评分参数未校准**。见[v2 指南](docs/query_v2.md)。
+- **新增 gated 源码**：先独立 K 次，只有剩余线程数在1..R时协作，否则独立完成；固定K=8探索R=8/16/32。host/Python检查通过，**新模式CUDA编译/GPU验证待服务器执行**。见[门控指南](docs/query_gate.md)。
+- **今日结果归档**：[2026-11-23两轮探索](results/query_pilot_20261123/README.md)，保留用户回传原文、126个聚合行及复算脚本，不冒充逐次原始样本。
+- **新增 v2 源码**：`tc_gpu_query_v2` 支持 budget（先独立执行 K 次，再协作剩余查询）和 score（比较独立/协作成本后选择），各模式分别编译；旧 v1 保留。host 查询覆盖/策略及 Python 回归检查通过，用户已在 A100 通过 budget/score 正确性并回传初步结果；默认评分参数未校准。见[v2 指南](docs/query_v2.md)。
 - **v1 用户探索**：已在 A100 通过正确性并回传 14 图×4 配置×3 次初步结果；S7 有收益信号，Google/均匀大团仍有退化。六图诊断显示部分图评分很多、启用协作很少，不能据此认定新规则已经有效。
 
 | 现在想看什么 | 入口 |
 |---|---|
 | A100 实验配置、结果与限制 | [A100 第一轮结果](docs/a100_v1_results.md) |
 | 完整原始记录、CSV、图与复算 | [results/a100_v1](results/a100_v1/README.md) |
+| 剩余线程门控、运行与诊断 | [gated 指南](docs/query_gate.md) |
 | 两条新路线、K预算、成本评分与服务器验证 | [query v2 指南](docs/query_v2.md) |
 | 自适应查询池源码、参数、验证与评测 | [query v1 指南](docs/adaptive_query_v1.md) |
 | 查询级并行方案、正确性与风险 | [下一版设计](docs/query_parallel_exploration.md) |
@@ -37,7 +40,7 @@ P09 并行计算课程项目。输入无向简单图，输出精确三角形总�
 | `tc_gpu_warp` | 一个 warp 协作处理一条边 | 固定粒度对照 |
 | `tc_gpu_split` | 轻边线程计算，重边入队后 warp 计算 | 两阶段分流对照 |
 | `tc_gpu_query` | v1 批内评分/虚拟查询池 | 保留上一轮探索版本 |
-| `tc_gpu_query_v2` | 先执行后协作 / 成本评分后协作 | 新实验源码，待 CUDA 验证 |
+| `tc_gpu_query_v2` | budget / score / 新 gated 门控 | budget/score 已由用户验证，新 gated 待 GPU 验证 |
 
 GPU 并行入口共用 runner，块内 CUB BlockReduce、全局 DeviceReduce，计数为 64 位。查询池 v2 探索两条局部协作路线，评分尚未 GPU 校准；没有全图自动调优、逐顶点计数或多 GPU 计数。
 

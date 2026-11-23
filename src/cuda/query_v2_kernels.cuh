@@ -44,12 +44,12 @@ __device__ __forceinline__ tc::Count query_v2_pool(const tc::Vertex* neighbors,
     return result;
 }
 // Mode 0 scalar, 1 always pool, 2 execute a prefix then pool the remainder,
-// 3 compare estimated scalar/pool costs before any query executes.
+// 3 compare estimated costs; 4 prefix budget then gate by remaining lane count.
 template<int Mode, bool Diagnostics>
 __global__ void count_query_v2(tc::Offset m, const tc::Offset* offsets,
         const tc::Vertex* neighbors, const tc::Vertex* sources, tc::Count* block_sums,
-        unsigned budget, tc::QueryV2Policy policy, tc::Offset* stats=nullptr) {
-    static_assert(Mode>=0 && Mode<=3,"unknown query v2 mode");
+        unsigned budget, tc::QueryV2Policy policy, unsigned remaining_limit, tc::Offset* stats=nullptr) {
+    static_assert(Mode>=0 && Mode<=4,"unknown query v2 mode");
     const unsigned lane=threadIdx.x%32;
     const tc::Offset tid=static_cast<tc::Offset>(blockIdx.x)*blockDim.x+threadIdx.x;
     const tc::Offset first=tid/32*32;
@@ -69,14 +69,19 @@ __global__ void count_query_v2(tc::Offset m, const tc::Offset* offsets,
         const auto original_a=ae-ab,b=be-bb;
         tc::Offset prefix=0;
         bool pool=Mode==1,fast=false;
-        if constexpr (Mode==2) {
+        unsigned active_remaining=0;
+        if constexpr (Mode==2 || Mode==4) {
             prefix=original_a<budget?original_a:static_cast<tc::Offset>(budget);
             const auto prefix_end=ab+prefix;
             for (auto j=ab;j<prefix_end;++j)
                 local+=tc::query_v2_lookup(neighbors,neighbors[j],bb,be);
             ab=prefix_end;
-            pool=__ballot_sync(0xffffffffU,ab<ae)!=0;
-            fast=!pool; // All queries finished during the independent prefix.
+            const unsigned remaining_mask=__ballot_sync(0xffffffffU,ab<ae);
+            fast=remaining_mask==0; // All queries finished in the prefix.
+            if constexpr (Mode==4) {
+                active_remaining=__popc(remaining_mask);
+                pool=tc::query_v2_pool_for_active(active_remaining,remaining_limit);
+            } else pool=remaining_mask!=0;
         } else if constexpr (Mode==3) {
             fast=__ballot_sync(0xffffffffU,original_a>policy.small)==0;
             if (!fast) {
@@ -105,6 +110,7 @@ __global__ void count_query_v2(tc::Offset m, const tc::Offset* offsets,
                 atomicAdd(stats+8,max_score);
                 atomicAdd(stats+9,prefixes);
                 atomicAdd(stats+10,remaining);
+                if constexpr (Mode==4) atomicAdd(stats+11+active_remaining,1ULL);
             }
         }
         if constexpr (Mode==0) {
@@ -128,13 +134,14 @@ __global__ void count_query_v2(tc::Offset m, const tc::Offset* offsets,
 template<bool Diagnostics>
 void launch_query_v2(int blocks, tc::Offset m, const tc::Offset* offsets,
         const tc::Vertex* neighbors, const tc::Vertex* sources, tc::Count* sums,
-        int mode, unsigned budget, tc::QueryV2Policy policy, tc::Offset* stats=nullptr) {
-#define TC_QUERY_V2_LAUNCH(M) count_query_v2<M, Diagnostics><<<blocks,block_threads>>>(m,offsets,neighbors,sources,sums,budget,policy,stats)
+        int mode, unsigned budget, tc::QueryV2Policy policy, unsigned remaining_limit, tc::Offset* stats=nullptr) {
+#define TC_QUERY_V2_LAUNCH(M) count_query_v2<M, Diagnostics><<<blocks,block_threads>>>(m,offsets,neighbors,sources,sums,budget,policy,remaining_limit,stats)
     switch (mode) {
         case 0: TC_QUERY_V2_LAUNCH(0); break;
         case 1: TC_QUERY_V2_LAUNCH(1); break;
         case 2: TC_QUERY_V2_LAUNCH(2); break;
         case 3: TC_QUERY_V2_LAUNCH(3); break;
+        case 4: TC_QUERY_V2_LAUNCH(4); break;
         default: throw std::runtime_error("Unknown query v2 mode");
     }
 #undef TC_QUERY_V2_LAUNCH

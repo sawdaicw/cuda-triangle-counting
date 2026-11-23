@@ -15,6 +15,10 @@ struct QueryV2Policy {
     unsigned locate = 8;
     unsigned margin_percent = 20;
 };
+// R=0 disables pooling; R=32 reproduces the original budget decision.
+TC_QUERY_V2_HD inline bool query_v2_pool_for_active(unsigned remaining, unsigned limit) {
+    return remaining != 0 && remaining <= limit;
+}
 TC_QUERY_V2_HD inline Offset query_v2_rounds(Offset queries) {
     return queries / 32 + (queries % 32 != 0);
 }

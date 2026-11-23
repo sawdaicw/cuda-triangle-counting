@@ -8,7 +8,7 @@ void require(bool ok,const char* what) { if(!ok) throw std::runtime_error(what);
 struct Task { tc::Offset ab=0,ae=0,bb=0,be=0; };
 // CPU model validates prefix+remainder coverage and exact triangle counts.
 // CUDA masks, device register allocation and memory safety require GPU tests.
-tc::Count model(const tc::Graph& g,int mode,unsigned budget,tc::QueryV2Policy policy) {
+tc::Count model(const tc::Graph& g,int mode,unsigned budget,tc::QueryV2Policy policy,unsigned remaining_limit=16) {
     const auto sources=tc::edge_sources(g);
     tc::Count result=0;
     for(std::size_t base=0;base<sources.size();base+=32) {
@@ -31,7 +31,7 @@ tc::Count model(const tc::Graph& g,int mode,unsigned budget,tc::QueryV2Policy po
             const auto depth=a?tc::query_depth(b):0;
             max_depth=std::max(max_depth,depth);max_work=std::max(max_work,a*depth);
         }
-        if(mode==2) {
+        if(mode==2 || mode==4) {
             for(unsigned lane=0;lane<32;++lane) {
                 auto& t=tasks[lane];done[lane]=std::min(t.ae-t.ab,static_cast<tc::Offset>(budget));
                 for(tc::Offset j=0;j<done[lane];++j) {
@@ -42,7 +42,9 @@ tc::Count model(const tc::Graph& g,int mode,unsigned budget,tc::QueryV2Policy po
         }
         tc::Offset remaining=0;
         for(unsigned lane=0;lane<32;++lane) {remaining+=tasks[lane].ae-tasks[lane].ab;ends[lane]=remaining;}
-        const bool pool=mode==1 || (mode==2 && remaining!=0) ||
+        unsigned active=0;
+        for(const auto& t:tasks) active+=t.ab<t.ae;
+        const bool pool=(mode==4 && tc::query_v2_pool_for_active(active,remaining_limit)) || mode==1 || (mode==2 && remaining!=0) ||
             (mode==3 && max_short>policy.small && tc::query_v2_use_pool(max_work,queries,max_depth,policy));
         if(pool) {
             // Lane-strided queries, including a partial last 32-query round.
@@ -69,6 +71,8 @@ tc::Count model(const tc::Graph& g,int mode,unsigned budget,tc::QueryV2Policy po
 }
 int main() {
     try {
+        for(unsigned r=0;r<=32;++r) for(unsigned limit=0;limit<=32;++limit)
+            require(tc::query_v2_pool_for_active(r,limit)==(r!=0 && r<=limit),"remaining gate boundary");
         const tc::QueryV2Policy policy;
         require(!tc::query_v2_use_pool(1024,4096,8,policy),"balanced heavy batch should remain scalar");
         require(tc::query_v2_use_pool(1024,159,8,policy),"skewed batch should pool");
@@ -100,12 +104,16 @@ int main() {
                     if(adj[u][v]&&std::make_pair(degree[u],u)<std::make_pair(degree[v],v)) graph.neighbors.push_back(v);
                 graph.offsets.push_back(graph.neighbors.size());
             }
-            for(int mode=0;mode<4;++mode) {
-                const std::vector<unsigned> budgets=mode==2?std::vector<unsigned>{0,1,4,8,10,16,65535}:std::vector<unsigned>{8};
+            for(int mode=0;mode<5;++mode) {
+                const std::vector<unsigned> budgets=(mode==2 || mode==4)?std::vector<unsigned>{0,1,4,8,10,16,65535}:std::vector<unsigned>{8};
                 const std::vector<tc::QueryV2Policy> policies=mode==3?
                     std::vector<tc::QueryV2Policy>{policy,{0,0,0,0},largest}:std::vector<tc::QueryV2Policy>{policy};
                 for(auto budget:budgets) for(auto p:policies) {
-                    require(model(graph,mode,budget,p)==oracle,"query v2 model vs independent triple oracle");++configurations;
+                    const std::vector<unsigned> limits=mode==4?std::vector<unsigned>{0,1,8,16,31,32}:std::vector<unsigned>{16};
+                    for(auto limit:limits) {
+                        require(model(graph,mode,budget,p,limit)==oracle,"query model vs independent triple oracle");++configurations;
+                        if(mode==4 && limit==32) require(model(graph,4,budget,p,limit)==model(graph,2,budget,p),"R32 vs original budget");
+                    }
                 }
             }
         }

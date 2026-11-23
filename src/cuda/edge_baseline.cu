@@ -46,7 +46,7 @@ struct Event {
     Event(const Event&) = delete;
     Event& operator=(const Event&) = delete;
 };
-struct Options { std::string input; int repeats = 10, warmup = 2, blocks = 0, threshold = 32; bool verify = false, profile_preprocess = false, profile_gpu = false; tc::PreprocessOptions preprocess; int query_mode = 2; bool query_diagnostics = false; tc::QueryPolicy query_policy; int query_v2_mode = 2; unsigned budget = 8; tc::QueryV2Policy query_v2_policy; };
+struct Options { std::string input; int repeats = 10, warmup = 2, blocks = 0, threshold = 32; bool verify = false, profile_preprocess = false, profile_gpu = false; tc::PreprocessOptions preprocess; int query_mode = 2; bool query_diagnostics = false; tc::QueryPolicy query_policy; int query_v2_mode = 2; unsigned budget = 8, remaining_limit = 16; tc::QueryV2Policy query_v2_policy; };
 int integer(const std::string& text, int low, int high) {
     if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos)
         throw std::runtime_error("Expected a nonnegative decimal integer: " + text);
@@ -56,7 +56,7 @@ int integer(const std::string& text, int low, int high) {
     return static_cast<int>(value);
 }
 Options parse(int argc, char** argv) {
-    if (argc < 2) throw std::runtime_error("Usage: " + std::string(argv[0]) + " INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N] (warp/split: --profile-gpu; split: --threshold N; query: --query-mode scalar|pool|adaptive --small N --pool-overhead N --pool-per-round N --pool-margin N --query-diagnostics; query-v2: --query-mode scalar|pool|budget|score --budget N --small N --setup-cost N --locate-cost N --margin-percent N)");
+    if (argc < 2) throw std::runtime_error("Usage: " + std::string(argv[0]) + " INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N] (warp/split: --profile-gpu; split: --threshold N; query: --query-mode scalar|pool|adaptive --small N --pool-overhead N --pool-per-round N --pool-margin N --query-diagnostics; query-v2: --query-mode scalar|pool|budget|score|gated --remaining-limit N --budget N --small N --setup-cost N --locate-cost N --margin-percent N)");
     Options o; o.input = argv[1];
     for (int i = 2; i < argc; ++i) {
         const std::string flag = argv[i];
@@ -71,7 +71,12 @@ Options parse(int argc, char** argv) {
             else if (value == "pool") o.query_v2_mode = 1;
             else if (value == "budget") o.query_v2_mode = 2;
             else if (value == "score") o.query_v2_mode = 3;
+            else if (value == "gated") o.query_v2_mode = 4;
             else throw std::runtime_error("Unknown query v2 mode: " + value);
+        }
+        else if (flag == "--remaining-limit" && TC_EDGE_MODE == 4) {
+            if (++i == argc) throw std::runtime_error("Missing value for " + flag);
+            o.remaining_limit = static_cast<unsigned>(integer(argv[i], 0, 32));
         }
         else if (TC_EDGE_MODE == 4 && (flag == "--budget" || flag == "--small" ||
                  flag == "--setup-cost" || flag == "--locate-cost" || flag == "--margin-percent")) {
@@ -240,7 +245,7 @@ int main(int argc, char** argv) {
 #elif TC_EDGE_MODE == 4
             {
                 launch_query_v2<false>(blocks, graph.neighbors.size(), d_offsets.data, d_neighbors.data,
-                    d_sources.data, d_sums.data, options.query_v2_mode, options.budget, options.query_v2_policy);
+                    d_sources.data, d_sums.data, options.query_v2_mode, options.budget, options.query_v2_policy, options.remaining_limit);
                 check(cudaGetLastError());
                 if (after_count) check(cudaEventRecord(after_count->data));
             }
@@ -286,8 +291,8 @@ int main(int argc, char** argv) {
         const double median = sorted.size() % 2 ? sorted[k] : (sorted[k - 1] + sorted[k]) / 2;
         // Diagnostic readback is outside first_total_ms and GPU timing samples.
         const auto stats_begin = Clock::now();
-        constexpr unsigned query_stats_count = TC_EDGE_MODE == 4 ? 11 : 9;
-        tc::Offset query_stats[query_stats_count] = {};
+        const unsigned query_stats_count = TC_EDGE_MODE == 4 ? (options.query_v2_mode == 4 ? 44 : 11) : 9;
+        tc::Offset query_stats[44] = {};
 #if TC_EDGE_MODE == 3
         // Outside a template, if constexpr does not hide undeclared kernel names
         // from the other backends. Exclude this launch during preprocessing.
@@ -298,7 +303,7 @@ int main(int argc, char** argv) {
                     d_neighbors.data, d_sources.data, d_sums.data, options.query_mode, options.query_policy, counters.data);
                 check(cudaGetLastError());
                 check(cub::DeviceReduce::Sum(scratch.data, scratch_bytes, d_sums.data, d_result.data, static_cast<int>(sum_count)));
-                check(cudaMemcpy(query_stats, counters.data, sizeof(query_stats), cudaMemcpyDeviceToHost));
+                check(cudaMemcpy(query_stats, counters.data, query_stats_count * sizeof(tc::Offset), cudaMemcpyDeviceToHost));
                 tc::Count diagnostic_count = 0;
                 check(cudaMemcpy(&diagnostic_count, d_result.data, sizeof(diagnostic_count), cudaMemcpyDeviceToHost));
                 if (diagnostic_count != first.count) throw std::runtime_error("Diagnostic pass count mismatch");
@@ -308,10 +313,10 @@ int main(int argc, char** argv) {
             Buffer<tc::Offset> counters(query_stats_count);
             check(cudaMemset(counters.data, 0, counters.bytes));
             launch_query_v2<true>(blocks, graph.neighbors.size(), d_offsets.data, d_neighbors.data,
-                d_sources.data, d_sums.data, options.query_v2_mode, options.budget, options.query_v2_policy, counters.data);
+                d_sources.data, d_sums.data, options.query_v2_mode, options.budget, options.query_v2_policy, options.remaining_limit, counters.data);
             check(cudaGetLastError());
             check(cub::DeviceReduce::Sum(scratch.data, scratch_bytes, d_sums.data, d_result.data, static_cast<int>(sum_count)));
-            check(cudaMemcpy(query_stats, counters.data, sizeof(query_stats), cudaMemcpyDeviceToHost));
+            check(cudaMemcpy(query_stats, counters.data, query_stats_count * sizeof(tc::Offset), cudaMemcpyDeviceToHost));
             tc::Count diagnostic_count = 0;
             check(cudaMemcpy(&diagnostic_count, d_result.data, sizeof(diagnostic_count), cudaMemcpyDeviceToHost));
             if (diagnostic_count != first.count) throw std::runtime_error("Query v2 diagnostic count mismatch");
@@ -395,10 +400,11 @@ int main(int argc, char** argv) {
             }
         }
         if constexpr (TC_EDGE_MODE == 4) {
-            constexpr const char* modes[] = {"scalar", "pool", "budget", "score"};
+            constexpr const char* modes[] = {"scalar", "pool", "budget", "score", "gated"};
             std::cout << ",\"query_mode\":" << quote(modes[options.query_v2_mode])
-                << ",\"query_policy_version\":\"warp-query-v2-uncalibrated\""
+                << ",\"query_policy_version\":" << quote(options.query_v2_mode == 4 ? "warp-query-gated-v1" : "warp-query-v2-uncalibrated")
                 << ",\"kernel_mode_specialized\":true,\"query_budget\":" << options.budget
+                << ",\"remaining_limit\":" << options.remaining_limit
                 << ",\"query_policy\":{\"small\":" << options.query_v2_policy.small
                 << ",\"setup\":" << options.query_v2_policy.setup
                 << ",\"locate\":" << options.query_v2_policy.locate
@@ -412,7 +418,14 @@ int main(int argc, char** argv) {
                     << ",\"all_queries\":" << query_stats[6] << ",\"all_scores\":" << query_stats[7]
                     << ",\"sum_batch_max_scores\":" << query_stats[8]
                     << ",\"prefix_queries\":" << query_stats[9] << ",\"remaining_queries\":" << query_stats[10]
-                    << ",\"extra_device_buffer_bytes\":88,\"pass_ms\":" << stats_ms << "}";
+                    << ",\"extra_device_buffer_bytes\":" << query_stats_count * sizeof(tc::Offset)
+                    << ",\"pass_ms\":" << stats_ms;
+                if (options.query_v2_mode == 4) {
+                    std::cout << ",\"remaining_threads_histogram\":[";
+                    for (unsigned r = 0; r <= 32; ++r) std::cout << (r ? "," : "") << query_stats[11 + r];
+                    std::cout << "]";
+                }
+                std::cout << "}";
             }
         }
         if (options.profile_preprocess) {

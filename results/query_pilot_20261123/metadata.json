@@ -1,0 +1,27 @@
+{
+  "date": "2026-11-23",
+  "device_reported": "NVIDIA A100-PCIE-40GB",
+  "preprocessing_threads_reported": 12,
+  "blocks_reported": 864,
+  "warmup_reported": 0,
+  "repeat_reported": 1,
+  "status": "user-reported aggregate pilot results; not raw per-process samples",
+  "cohort_source_commits": {
+    "v1": "a787faffc04295f3a4124728662c61804f9e270c",
+    "v2": "f67bea4cdf331895321953a0b4b11dd1da07073e"
+  },
+  "cohort_sizes": {
+    "v1": "14 graphs x 4 variants x 3 processes (reported)",
+    "v2": "14 graphs x 5 variants x 3 processes (reported)"
+  },
+  "limits": [
+    "No original per-process JSON, hashes or machine metadata received; commit/config association follows conversation and supplied commands.",
+    "first GPU execution includes initial execution effects; no warmups before it.",
+    "Do not combine cohorts or interpret min/median/max as a confidence interval.",
+    "Additional repeat=1 GPU-only sample is not another full-task sample."
+  ],
+  "source_sha256": {
+    "v1_reported.txt": "2fc025dd4893ce20c6fe3e6d5122045c0268c5bc8588cb338bac7c30d682d830",
+    "v2_reported.txt": "eedbad1c5b2276a968e0a030178517fef0d11aa82748f7f507a45f1f20203718"
+  }
+}

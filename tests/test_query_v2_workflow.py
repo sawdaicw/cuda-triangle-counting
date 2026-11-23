@@ -34,6 +34,22 @@ class QueryV2Workflow(unittest.TestCase):
             self.assertEqual(score['pool_batches'],0)
             self.assertEqual(score['fast_batches'],score['batches'])
 
+    def test_gated_histogram_and_limits(self):
+        graph=list(itertools.combinations(range(40),2))
+        for k in [0,1,4,8,16,65535]:
+            for limit in [0,1,8,16,31,32]:
+                stats=checks.expected_stats(graph,'gated',budget=k,remaining_limit=limit)
+                histogram=stats['remaining_threads_histogram']
+                self.assertEqual(sum(histogram),stats['batches'])
+                self.assertEqual(histogram[0],stats['fast_batches'])
+                self.assertEqual(sum(histogram[1:limit+1]),stats['pool_batches'])
+                self.assertEqual(stats['prefix_queries']+stats['remaining_queries'],stats['all_queries'])
+                if limit==0: self.assertEqual(stats['pooled_queries'],0)
+                if limit==32:
+                    budget=checks.expected_stats(graph,'budget',budget=k)
+                    self.assertEqual(stats['pool_batches'],budget['pool_batches'])
+                    self.assertEqual(stats['pooled_queries'],budget['pooled_queries'])
+
     def test_v2_protocol_and_summary(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);build=root/'build';build.mkdir()
@@ -43,9 +59,9 @@ import json,sys
 args=sys.argv[2:]
 def value(flag,default): return args[args.index(flag)+1] if flag in args else default
 mode=value('--query-mode','edge')
-times={'edge':10,'scalar':10.1,'pool':15,'budget':8,'score':9}
-row=dict(vertices=3,undirected_edges=3,triangles=1,verified=True,device='FAKE TEST DEVICE',compute_capability='0.0',cuda_runtime_version=0,cuda_driver_version=0,blocks=int(value('--blocks',0)),threads_per_block=256,first_total_ms=times[mode]*10,first_count_reduce_ms=times[mode])
-if mode!='edge': row.update(backend='gpu_query_v2_binary',query_mode=mode,query_budget=int(value('--budget',8)),kernel_mode_specialized=True,query_diagnostics_enabled=False,query_policy={key:int(value(flag,0)) for key,flag in [('small','--small'),('setup','--setup-cost'),('locate','--locate-cost'),('margin_percent','--margin-percent')]})
+times={'edge':10,'scalar':10.1,'pool':15,'budget':8,'score':9,'gated':7}
+row=dict(vertices=3,undirected_edges=3,triangles=1,verified=True,device='FAKE TEST DEVICE',compute_capability='0.0',cuda_runtime_version=0,cuda_driver_version=0,blocks=int(value('--blocks',0)),threads_per_block=256,first_total_ms=times[mode]*10,first_count_reduce_ms=times[mode],count_reduce_ms_median=times[mode])
+if mode!='edge': row.update(backend='gpu_query_v2_binary',query_mode=mode,query_budget=int(value('--budget',8)),remaining_limit=int(value('--remaining-limit',16)),kernel_mode_specialized=True,query_diagnostics_enabled=False,query_policy={key:int(value(flag,0)) for key,flag in [('small','--small'),('setup','--setup-cost'),('locate','--locate-cost'),('margin_percent','--margin-percent')]})
 print(json.dumps(row))
 '''
             for name in ['tc_gpu_edge_baseline','tc_gpu_query_v2']:
@@ -59,6 +75,15 @@ print(json.dumps(row))
             self.assertEqual(set(summary),{'edge','budget0','budget4','budget8','budget16','score','scalar','pool'})
             self.assertEqual(summary['budget8']['first_count_reduce_ms']['speedup_vs_edge'],1.25)
             self.assertEqual(len(json.loads((out/'commands.json').read_text())),16)
+            gate_command=[sys.executable,str(ROOT/'scripts/benchmark_query_gate.py'),'--build',str(build),
+                          '--inputs',str(path),'--blocks','3','--threads','2','--runs','2','--budget','8',
+                          '--remaining-limits','0','8','16','32','--out',str(root/'gate-output')]
+            result=subprocess.run(gate_command,text=True,capture_output=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            gate_summary=json.loads((root/'gate-output'/'summary.json').read_text())['triangle.txt']
+            self.assertEqual(set(gate_summary),{'edge','budget','gate0','gate8','gate16','gate32'})
+            self.assertEqual(gate_summary['budget']['count_reduce_ms_median']['median_ms'],8)
+            self.assertEqual(len(json.loads((root/'gate-output'/'commands.json').read_text())),12)
             self.assertNotEqual(subprocess.run(command,capture_output=True).returncode,0)
             for extra in [['--budgets','4','4'],['--budgets','-1'],['--margin-percent','1001']]:
                 self.assertNotEqual(subprocess.run(command+extra,capture_output=True).returncode,0)

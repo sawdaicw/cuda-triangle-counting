@@ -1,0 +1,83 @@
+{
+  "source": "user pasted six v1 adaptive diagnostic snapshots; pass_ms is an extra instrumented pass, not normal count time",
+  "snapshots": {
+    "S5": {
+      "batches": 130817,
+      "fast_batches": 0,
+      "scalar_batches": 117577,
+      "pool_batches": 13240,
+      "nonempty_edges": 4185630,
+      "pooled_queries": 46136876,
+      "all_queries": 711654910,
+      "all_scores": 6304009916,
+      "sum_batch_max_scores": 230133867,
+      "extra_device_buffer_bytes": 72,
+      "pass_ms": 28.211019
+    },
+    "S7": {
+      "batches": 65536,
+      "fast_batches": 1,
+      "scalar_batches": 60447,
+      "pool_batches": 5088,
+      "nonempty_edges": 1825815,
+      "pooled_queries": 10371680,
+      "all_queries": 90537960,
+      "all_scores": 701190860,
+      "sum_batch_max_scores": 29204762,
+      "extra_device_buffer_bytes": 72,
+      "pass_ms": 4.436864
+    },
+    "amazon0302": {
+      "batches": 28119,
+      "fast_batches": 11570,
+      "scalar_batches": 16549,
+      "pool_batches": 0,
+      "nonempty_edges": 758565,
+      "pooled_queries": 0,
+      "all_queries": 1879495,
+      "all_scores": 5359970,
+      "sum_batch_max_scores": 392077,
+      "extra_device_buffer_bytes": 72,
+      "pass_ms": 0.422619
+    },
+    "cit-Patents": {
+      "batches": 516218,
+      "fast_batches": 16165,
+      "scalar_batches": 497424,
+      "pool_batches": 2629,
+      "nonempty_edges": 15137925,
+      "pooled_queries": 659980,
+      "all_queries": 71901932,
+      "all_scores": 273485177,
+      "sum_batch_max_scores": 22105805,
+      "extra_device_buffer_bytes": 72,
+      "pass_ms": 8.689036
+    },
+    "roadNet-CA": {
+      "batches": 86457,
+      "fast_batches": 86457,
+      "scalar_batches": 0,
+      "pool_batches": 0,
+      "nonempty_edges": 1781990,
+      "pooled_queries": 0,
+      "all_queries": 2268741,
+      "all_scores": 4191869,
+      "sum_batch_max_scores": 360567,
+      "extra_device_buffer_bytes": 72,
+      "pass_ms": 1.190776
+    },
+    "web-Google": {
+      "batches": 135065,
+      "fast_batches": 294,
+      "scalar_batches": 134490,
+      "pool_batches": 281,
+      "nonempty_edges": 3798751,
+      "pooled_queries": 71143,
+      "all_queries": 18698263,
+      "all_scores": 74709568,
+      "sum_batch_max_scores": 7129204,
+      "extra_device_buffer_bytes": 72,
+      "pass_ms": 2.268812
+    }
+  }
+}

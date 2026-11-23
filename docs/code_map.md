@@ -7,6 +7,8 @@
 | `src/common/edge_binary.hpp` | GPU/CPU可共用二分交集、定向边源点元数据 |
 | `src/common/query_v2_policy.hpp` | v2 两路径成本模型、共用单查询二分 |
 | `src/cuda/query_v2_kernels.cuh` | 编译期独立模式、前缀执行/剩余协作、成本评分 |
+| `scripts/benchmark_query_gate.py` | 固定K、扫描R的门控对照，分开汇总首次与额外GPU重复 |
+| `results/query_pilot_20261123/` | 今日两轮用户汇总日志、表格及复算，不含逐次原始样本 |
 | `scripts/benchmark_query_v2.py` | 两条主路线独立进程探索；可选基础对照 |
 | `src/common/query_policy.hpp` | host/device 共用整数评分与门控，默认参数未校准 |
 | `src/cuda/query_kernels.cuh` | 虚拟查询池、快速路径、自适应批内调度与可选诊断 |
