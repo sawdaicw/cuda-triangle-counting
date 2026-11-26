@@ -1,18 +1,20 @@
 #include <cuda_runtime.h>
 #include <cub/block/block_reduce.cuh>
 #include <cub/device/device_reduce.cuh>
+#include <cub/device/device_scan.cuh>
 #include "../common/edge_binary.hpp"
 #include "../common/profile_json.hpp"
 #include "../common/preprocess.hpp"
 #include "../common/warp_tasks.hpp"
 #include "../common/query_policy.hpp"
 #include "../common/query_v2_policy.hpp"
+#include "../common/global_queries.hpp"
 #include <memory>
 
 #ifndef TC_EDGE_MODE
 #define TC_EDGE_MODE 0
 #endif
-static_assert(TC_EDGE_MODE >= 0 && TC_EDGE_MODE <= 4, "Unknown edge backend");
+static_assert(TC_EDGE_MODE >= 0 && TC_EDGE_MODE <= 5, "Unknown edge backend");
 #include <chrono>
 #include <cmath>
 #include <iomanip>
@@ -46,7 +48,7 @@ struct Event {
     Event(const Event&) = delete;
     Event& operator=(const Event&) = delete;
 };
-struct Options { std::string input; int repeats = 10, warmup = 2, blocks = 0, threshold = 32; bool verify = false, profile_preprocess = false, profile_gpu = false; tc::PreprocessOptions preprocess; int query_mode = 2; bool query_diagnostics = false; tc::QueryPolicy query_policy; int query_v2_mode = 2; unsigned budget = 8, remaining_limit = 16; tc::QueryV2Policy query_v2_policy; };
+struct Options { std::string input; int repeats = 10, warmup = 2, blocks = 0, threshold = 32; bool verify = false, profile_preprocess = false, profile_gpu = false; tc::PreprocessOptions preprocess; int query_mode = 2; bool query_diagnostics = false; tc::QueryPolicy query_policy; int query_v2_mode = 2; unsigned budget = 8, remaining_limit = 16; tc::QueryV2Policy query_v2_policy; unsigned chunk = 1, bypass_edges = 0; };
 int integer(const std::string& text, int low, int high) {
     if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos)
         throw std::runtime_error("Expected a nonnegative decimal integer: " + text);
@@ -56,14 +58,22 @@ int integer(const std::string& text, int low, int high) {
     return static_cast<int>(value);
 }
 Options parse(int argc, char** argv) {
-    if (argc < 2) throw std::runtime_error("Usage: " + std::string(argv[0]) + " INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N] (warp/split: --profile-gpu; split: --threshold N; query: --query-mode scalar|pool|adaptive --small N --pool-overhead N --pool-per-round N --pool-margin N --query-diagnostics; query-v2: --query-mode scalar|pool|budget|score|gated --remaining-limit N --budget N --small N --setup-cost N --locate-cost N --margin-percent N)");
+    if (argc < 2) throw std::runtime_error("Usage: " + std::string(argv[0]) + " INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N] (warp/split: --profile-gpu; split: --threshold N; query: --query-mode scalar|pool|adaptive --small N --pool-overhead N --pool-per-round N --pool-margin N --query-diagnostics; query-v2: --query-mode scalar|pool|budget|score|gated --remaining-limit N --budget N --small N --setup-cost N --locate-cost N --margin-percent N; global: --chunk B; v2/global: --bypass-edges M)");
     Options o; o.input = argv[1];
     for (int i = 2; i < argc; ++i) {
         const std::string flag = argv[i];
         if (flag == "--verify") o.verify = true;
         else if (flag == "--profile-preprocess") o.profile_preprocess = true;
-        else if (flag == "--profile-gpu" && TC_EDGE_MODE != 0) o.profile_gpu = true;
-        else if (flag == "--query-diagnostics" && TC_EDGE_MODE >= 3) o.query_diagnostics = true;
+        else if (flag == "--profile-gpu") o.profile_gpu = true;
+        else if (flag == "--chunk" && TC_EDGE_MODE == 5) {
+            if (++i == argc) throw std::runtime_error("Missing value for " + flag);
+            o.chunk = static_cast<unsigned>(integer(argv[i], 1, 65535));
+        }
+        else if (flag == "--bypass-edges" && TC_EDGE_MODE >= 4) {
+            if (++i == argc) throw std::runtime_error("Missing value for " + flag);
+            o.bypass_edges = static_cast<unsigned>(integer(argv[i], 0, std::numeric_limits<int>::max()));
+        }
+        else if (flag == "--query-diagnostics" && (TC_EDGE_MODE == 3 || TC_EDGE_MODE == 4)) o.query_diagnostics = true;
         else if (flag == "--query-mode" && TC_EDGE_MODE == 4) {
             if (++i == argc) throw std::runtime_error("Missing value for " + flag);
             const std::string value = argv[i];
@@ -142,6 +152,8 @@ __global__ void count_edges(tc::Offset m, const tc::Offset* offsets,
 #include "query_kernels.cuh"
 #elif TC_EDGE_MODE == 4
 #include "query_v2_kernels.cuh"
+#elif TC_EDGE_MODE == 5
+#include "global_query_kernels.cuh"
 #endif
 struct Sample {
     float count_reduce_ms;
@@ -169,6 +181,11 @@ int main(int argc, char** argv) {
         const auto graph_ready = Clock::now();
         const auto sources = tc::edge_sources(graph);
         const auto metadata_ready = Clock::now();
+        const bool bypass_used = TC_EDGE_MODE >= 4 && graph.neighbors.size() < options.bypass_edges;
+        if constexpr (TC_EDGE_MODE == 5) {
+            if (!bypass_used && graph.neighbors.size() >= static_cast<std::size_t>(std::numeric_limits<int>::max()))
+                throw std::runtime_error("Global-query scan requires m+1 <= INT_MAX on this implementation");
+        }
         check(cudaSetDevice(0));
         cudaDeviceProp prop{}; check(cudaGetDeviceProperties(&prop, 0));
         int runtime = 0, driver = 0;
@@ -192,12 +209,22 @@ int main(int argc, char** argv) {
         }
         std::size_t scratch_bytes = 0;
         check(cub::DeviceReduce::Sum(nullptr, scratch_bytes, d_sums.data, d_result.data, static_cast<int>(sum_count)));
+        std::unique_ptr<Buffer<tc::Offset>> query_prefix;
+        std::size_t scan_scratch_bytes = 0;
+#if TC_EDGE_MODE == 5
+        if (!bypass_used) {
+            query_prefix = std::make_unique<Buffer<tc::Offset>>(graph.neighbors.size() + 1);
+            check(cub::DeviceScan::ExclusiveSum(nullptr, scan_scratch_bytes, query_prefix->data, query_prefix->data,
+                                               static_cast<int>(graph.neighbors.size() + 1)));
+        }
+#endif
+        scratch_bytes = std::max(scratch_bytes, scan_scratch_bytes);
         Buffer<unsigned char> scratch(scratch_bytes);
         Event start, stop;
         std::unique_ptr<Event> after_light, after_count;
         if (options.profile_gpu) {
             after_count = std::make_unique<Event>();
-            if constexpr (TC_EDGE_MODE == 2) after_light = std::make_unique<Event>();
+            if constexpr (TC_EDGE_MODE == 2 || TC_EDGE_MODE == 5) after_light = std::make_unique<Event>();
         }
         const auto setup_ready = Clock::now();
         check(cudaMemcpy(d_offsets.data, graph.offsets.data(), d_offsets.bytes, cudaMemcpyHostToDevice));
@@ -209,10 +236,20 @@ int main(int argc, char** argv) {
         auto run = [&]() {
             const auto run_begin = Clock::now();
             check(cudaEventRecord(start.data));
+#if TC_EDGE_MODE >= 4
+            if (bypass_used) {
+                if (after_light) check(cudaEventRecord(after_light->data));
+                count_edges<<<blocks, block_threads>>>(graph.neighbors.size(), d_offsets.data, d_neighbors.data, d_sources.data, d_sums.data);
+                check(cudaGetLastError());
+                if (after_count) check(cudaEventRecord(after_count->data));
+            } else
+#endif
+            {
 #if TC_EDGE_MODE == 0
             {
                 count_edges<<<blocks, block_threads>>>(graph.neighbors.size(), d_offsets.data, d_neighbors.data, d_sources.data, d_sums.data);
                 check(cudaGetLastError());
+                if (after_count) check(cudaEventRecord(after_count->data));
             }
 #elif TC_EDGE_MODE == 1
             {
@@ -249,14 +286,29 @@ int main(int argc, char** argv) {
                 check(cudaGetLastError());
                 if (after_count) check(cudaEventRecord(after_count->data));
             }
+#elif TC_EDGE_MODE == 5
+            {
+                // Rebuild index on EVERY run: no free amortization against edge baseline.
+                build_global_query_lengths<<<blocks, block_threads>>>(graph.neighbors.size(), d_offsets.data,
+                    d_neighbors.data, d_sources.data, query_prefix->data);
+                check(cudaGetLastError());
+                check(cub::DeviceScan::ExclusiveSum(scratch.data, scan_scratch_bytes, query_prefix->data, query_prefix->data,
+                                                   static_cast<int>(graph.neighbors.size() + 1)));
+                if (after_light) check(cudaEventRecord(after_light->data));
+                count_global_queries<<<blocks, block_threads>>>(graph.neighbors.size(), query_prefix->data,
+                    d_offsets.data, d_neighbors.data, d_sources.data, d_sums.data, options.chunk);
+                check(cudaGetLastError());
+                if (after_count) check(cudaEventRecord(after_count->data));
+            }
 #endif
+            }
             check(cub::DeviceReduce::Sum(scratch.data, scratch_bytes, d_sums.data, d_result.data, static_cast<int>(sum_count)));
             check(cudaEventRecord(stop.data));
             check(cudaEventSynchronize(stop.data));
             float elapsed = 0; check(cudaEventElapsedTime(&elapsed, start.data, stop.data));
             float light_ms = 0, warp_ms = 0, reduce_ms = 0;
             if (options.profile_gpu) {
-                if constexpr (TC_EDGE_MODE == 2) {
+                if constexpr (TC_EDGE_MODE == 2 || TC_EDGE_MODE == 5) {
                     check(cudaEventElapsedTime(&light_ms, start.data, after_light->data));
                     check(cudaEventElapsedTime(&warp_ms, after_light->data, after_count->data));
                 } else check(cudaEventElapsedTime(&warp_ms, start.data, after_count->data));
@@ -322,6 +374,10 @@ int main(int argc, char** argv) {
             if (diagnostic_count != first.count) throw std::runtime_error("Query v2 diagnostic count mismatch");
         }
 #endif
+        tc::Offset total_queries = 0;
+        if constexpr (TC_EDGE_MODE == 5) {
+            if (query_prefix) check(cudaMemcpy(&total_queries, query_prefix->data + graph.neighbors.size(), sizeof(total_queries), cudaMemcpyDeviceToHost));
+        }
         tc::Offset heavy_edges = 0;
         if constexpr (TC_EDGE_MODE == 2)
             check(cudaMemcpy(&heavy_edges, queue_size->data, sizeof(heavy_edges), cudaMemcpyDeviceToHost));
@@ -333,9 +389,9 @@ int main(int argc, char** argv) {
             throw std::runtime_error("GPU baseline / CPU merge count mismatch");
         const double verify_ms = ms(verify_begin, Clock::now());
         const std::size_t queue_bytes = queue ? queue->bytes + queue_size->bytes : 0;
-        const std::size_t bytes = d_offsets.bytes + d_neighbors.bytes + d_sources.bytes + d_sums.bytes + d_result.bytes + scratch.bytes + queue_bytes;
+        const std::size_t bytes = d_offsets.bytes + d_neighbors.bytes + d_sources.bytes + d_sums.bytes + d_result.bytes + scratch.bytes + queue_bytes + (query_prefix ? query_prefix->bytes : 0);
         constexpr const char* backend = TC_EDGE_MODE == 0 ? "gpu_edge_binary" :
-            (TC_EDGE_MODE == 1 ? "gpu_warp_binary" : (TC_EDGE_MODE == 2 ? "gpu_split_binary" : (TC_EDGE_MODE == 3 ? "gpu_query_binary" : "gpu_query_v2_binary")));
+            (TC_EDGE_MODE == 1 ? "gpu_warp_binary" : (TC_EDGE_MODE == 2 ? "gpu_split_binary" : (TC_EDGE_MODE == 3 ? "gpu_query_binary" : (TC_EDGE_MODE == 4 ? "gpu_query_v2_binary" : "gpu_query_global_binary"))));
         std::cout << std::setprecision(10)
             << "{\"backend\":" << quote(backend) << ",\"input\":" << quote(options.input)
             << ",\"device\":" << quote(prop.name) << ",\"compute_capability\":" << quote(std::to_string(prop.major) + "." + std::to_string(prop.minor))
@@ -405,6 +461,7 @@ int main(int argc, char** argv) {
                 << ",\"query_policy_version\":" << quote(options.query_v2_mode == 4 ? "warp-query-gated-v1" : "warp-query-v2-uncalibrated")
                 << ",\"kernel_mode_specialized\":true,\"query_budget\":" << options.budget
                 << ",\"remaining_limit\":" << options.remaining_limit
+                << ",\"diagnostics_inspect_candidate\":true
                 << ",\"query_policy\":{\"small\":" << options.query_v2_policy.small
                 << ",\"setup\":" << options.query_v2_policy.setup
                 << ",\"locate\":" << options.query_v2_policy.locate
@@ -426,6 +483,21 @@ int main(int argc, char** argv) {
                     std::cout << "]";
                 }
                 std::cout << "}";
+            }
+        }
+        if constexpr (TC_EDGE_MODE >= 4) {
+            std::cout << ",\"bypass_threshold_edges\":" << options.bypass_edges
+                      << ",\"bypass_used\":" << (bypass_used ? "true" : "false");
+        }
+        if constexpr (TC_EDGE_MODE == 5) {
+            std::cout << ",\"query_chunk\":" << options.chunk << ",\"query_index_bytes\":" << (query_prefix ? query_prefix->bytes : 0)
+                      << ",\"total_queries\":";
+            if (query_prefix) std::cout << total_queries; else std::cout << "null";
+            std::cout << ",\"index_rebuilt_each_run\":true";
+            if (options.profile_gpu) {
+                std::cout << ",\"first_query_index_ms\":" << first.light_queue_ms << ",\"query_index_ms_samples\":[";
+                for (std::size_t i = 0; i < light_samples.size(); ++i) std::cout << (i ? "," : "") << light_samples[i];
+                std::cout << "]";
             }
         }
         if (options.profile_preprocess) {

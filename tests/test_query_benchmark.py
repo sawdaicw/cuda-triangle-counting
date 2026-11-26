@@ -21,9 +21,9 @@ class QueryBenchmarkChecks(unittest.TestCase):
         # Catch accidental name lookup in discarded non-template constexpr paths.
         with tempfile.TemporaryDirectory() as directory:
             include=Path(directory)
-            for name in ['cuda_runtime.h','cub/block/block_reduce.cuh','cub/device/device_reduce.cuh']:
+            for name in ['cuda_runtime.h','cub/block/block_reduce.cuh','cub/device/device_reduce.cuh','cub/device/device_scan.cuh']:
                 stub=include/name;stub.parent.mkdir(parents=True,exist_ok=True);stub.write_text('')
-            for mode in range(5):
+            for mode in range(6):
                 result=subprocess.run(['g++','-std=c++17','-E','-x','c++',
                     '-I',str(include),f'-DTC_EDGE_MODE={mode}',str(ROOT/'src/cuda/edge_baseline.cu')],
                     text=True,capture_output=True,check=True)
@@ -38,6 +38,11 @@ class QueryBenchmarkChecks(unittest.TestCase):
                 else:
                     self.assertNotIn('count_query_v2',result.stdout)
                     self.assertNotIn('launch_query_v2',result.stdout)
+
+                if mode==5:
+                    self.assertIn('count_global_queries<<<',result.stdout)
+                else:
+                    self.assertNotIn('count_global_queries',result.stdout)
 
     def test_diagnostic_oracle(self):
         triangle = [(0,1),(1,2),(0,2)]

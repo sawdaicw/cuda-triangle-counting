@@ -37,3 +37,17 @@
 删除未被代码读取的`configs/experiments.json`早期模板（G0/G1/G2、预热5次/重复30次）与空`results/raw/template.csv`。真实配置由CLI、实验metadata和原始JSON记录，避免模板被误当执行参数。
 
 早期研究计划移到`docs/archive/initial_research_plan.md`；当前路线在`docs/research_plan.md`。README去掉重复的阶段更新，输入/算法详解保留到`docs/input_and_algorithm.md`。清理未修改已测GPU计算代码。
+
+
+## 2026-11-26：统一研究实验与全局查询
+
+- `src/common/global_queries.hpp`：CPU/GPU 共用查询所属边定位与连续查询段执行，可独立验证查询覆盖。
+- `src/cuda/global_query_kernels.cuh`：短表查询数、CUB 前缀扫描、查询段分配与块内归约；由 shared runner 的 mode 5 调用。
+- `scripts/run_research.py`：K/R/B/M 扫描、固定参数真实图评测与压力测试，失败保留记录并停止。
+- `scripts/make_scale_graphs.py`：开发图嵌套顶点诱导子图，辅助小图阈值探索。
+- `scripts/plot_research.py`：精确 CSV、PNG/PDF 参数曲线、固定方法加速比与阶段均值。
+- `configs/research_freeze.example.json`：参数冻结模板，不代表已经选出的最优参数。
+- `tests/test_global_queries.cpp` / `tests/check_global_queries.py`：前者 host 独立穷举/查询覆盖，后者服务器 GPU 编译后运行。
+- `tests/test_research_workflow.py`：假设备测试执行协议、冻结检查、错误保存与绘图；其数据不属于性能结果。
+
+完整使用顺序见 [实验指南](research_experiments.md)。

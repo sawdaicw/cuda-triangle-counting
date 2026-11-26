@@ -1,3 +1,5 @@
 
 # Preserve user-supplied benchmark logs byte-for-byte (Windows CRLF).
 results/query_pilot_20261123/input_logs/*.txt -text whitespace=cr-at-eol
+
+results/query_gate_pilot_20261123/reported.txt -text whitespace=cr-at-eol

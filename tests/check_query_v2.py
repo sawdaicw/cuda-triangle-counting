@@ -94,6 +94,12 @@ def main():
         for mode in ['budget','score','gated']:
             subprocess.run([exe,str(path),'--query-mode',mode,'--verify','--warmup','0','--repeat','1',
                 '--parser','omp','--mapping','omp','--sort','omp','--threads','3','--check-csr'],check=True,capture_output=True,timeout=120)
+        for cutoff in [0,1000000]:
+            row=json.loads(subprocess.run([exe,str(path),'--query-mode','gated','--bypass-edges',str(cutoff),
+                '--verify','--warmup','0','--repeat','1','--profile-gpu'],check=True,capture_output=True,text=True,timeout=120).stdout)
+            assert row['triangles']==check_serial.count_bruteforce(records) and row['verified']
+            assert row['bypass_used']==(len(check_serial.normalize(records)[1])<cutoff)
+            assert abs(sum(row['first_stages_ms'].values())-row['first_count_reduce_ms'])<max(.003,row['first_count_reduce_ms']*.01)
         for flags in [['--query-mode','adaptive'],['--query-mode'],['--budget','-1'],['--budget','65536'],
                       ['--setup-cost','x'],['--locate-cost'],['--margin-percent','1001'],['--pool-overhead','64'],['--remaining-limit','-1'],['--remaining-limit','33'],['--remaining-limit']]:
             assert subprocess.run([exe,str(path),*flags],capture_output=True,timeout=30).returncode!=0,flags
