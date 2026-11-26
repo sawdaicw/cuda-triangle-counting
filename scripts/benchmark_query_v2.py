@@ -27,6 +27,7 @@ def main():
     parser.add_argument('--setup-cost', type=int, default=16)
     parser.add_argument('--locate-cost', type=int, default=8)
     parser.add_argument('--margin-percent', type=int, default=20)
+    parser.add_argument('--suite', choices=['budget','reuse'], default='budget', help='reuse: edge/pool/common-row binary/shared hash only')
     parser.add_argument('--include-controls', action='store_true', help='also measure specialized scalar and pool controls')
     parser.add_argument('--threads', type=int, default=12, help='same OpenMP preprocessing for ALL variants')
     parser.add_argument('--runs', type=int, default=3, help='fresh full-pipeline processes per graph/variant')
@@ -53,6 +54,9 @@ def main():
     variants['score']=('tc_gpu_query_v2',['--query-mode','score',*policy])
     if args.include_controls:
         variants.update({mode:('tc_gpu_query_v2',['--query-mode',mode,*policy]) for mode in ['scalar','pool']})
+    if args.suite == 'reuse':
+        variants = {'edge':('tc_gpu_edge_baseline',[])}
+        variants.update({mode:('tc_gpu_query_v2',['--query-mode',mode]) for mode in ['pool','reuse','hash']})
     inputs = [Path(p).resolve() for p in args.inputs]
     if any(not p.is_file() for p in inputs) or len({p.name for p in inputs}) != len(inputs):
         parser.error('inputs must exist and have distinct basenames')
@@ -68,7 +72,7 @@ def main():
     def git(*command):
         return subprocess.run(['git',*command],cwd=repo,text=True,capture_output=True).stdout.strip()
     source_file=repo/'SOURCE_COMMIT.txt'
-    manifest={'purpose':'query-v2 budget/cost-score exploration; uncalibrated policy, no per-input winner selection',
+    manifest={'purpose':'query-v2 exploration; fixed policies, no per-input winner selection', 'suite':args.suite,
               'commit':git('rev-parse','HEAD'), 'worktree_status':git('status','--porcelain'),
               'archive_source_commit':source_file.read_text().strip() if source_file.is_file() else None,
               'input_sha256':{str(p):sha256(p) for p in inputs},

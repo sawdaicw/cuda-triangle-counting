@@ -43,17 +43,97 @@ __device__ __forceinline__ tc::Count query_v2_pool(const tc::Vertex* neighbors,
     }
     return result;
 }
+// Reuse the actual common LONG row, not merely the source vertex. Empty lanes
+// are ignored. Mixed targets retain the existing virtual query pool.
+// Mode 5: common-row binary lookup; Mode 6: bounded warp-private shared hash.
+// Dense ids are < UINT32_MAX (the graph reader rejects larger vertex counts).
+constexpr unsigned query_hash_slots = 1024;
+constexpr tc::Vertex query_hash_empty = 0xffffffffU;
+__device__ __forceinline__ unsigned query_hash_slot(tc::Vertex key) {
+    return (key * 2654435761U) & (query_hash_slots-1);
+}
+template<bool Hash>
+__device__ __forceinline__ tc::Count query_v2_reuse(const tc::Vertex* neighbors,
+        tc::Offset ab, tc::Offset ae, tc::Offset bb, tc::Offset be, unsigned lane,
+        tc::Vertex* table, bool diagnostics, tc::Offset* stats) {
+    const unsigned mask=__ballot_sync(0xffffffffU,ab<ae);
+    if (!mask) return 0;
+    const unsigned leader=__ffs(mask)-1;
+    const auto common_bb=__shfl_sync(0xffffffffU,bb,leader);
+    const auto common_be=__shfl_sync(0xffffffffU,be,leader);
+    const bool common=__all_sync(0xffffffffU,ab==ae || (bb==common_bb && be==common_be));
+    if (!common) return query_v2_pool(neighbors,ab,ae,bb,be,lane);
+    tc::Offset end=ae-ab;
+    for (unsigned delta=1;delta<32;delta*=2) {
+        const auto previous=__shfl_up_sync(0xffffffffU,end,delta);
+        if (lane>=delta) end+=previous;
+    }
+    const auto total=__shfl_sync(0xffffffffU,end,31), length=common_be-common_bb;
+    // At most 50% occupancy; table is completely rebuilt inside timed work.
+    // This is an initial reuse gate, not a claim about optimal hardware costs.
+    const bool use_hash=Hash && length>=16 && length<=query_hash_slots/2 && total>=2*length;
+    if (diagnostics && lane==0) {
+        atomicAdd(stats+11,1ULL);
+        atomicAdd(stats+12,use_hash?1ULL:0ULL);
+        atomicAdd(stats+13,use_hash?total:0ULL);
+        atomicAdd(stats+14,use_hash?length:0ULL);
+    }
+    if constexpr (Hash) {
+        if (use_hash) {
+            for (unsigned i=lane;i<query_hash_slots;i+=32) table[i]=query_hash_empty;
+            __syncwarp();
+            for (tc::Offset i=common_bb+lane;i<common_be;i+=32) {
+                const auto key=neighbors[i];
+                auto slot=query_hash_slot(key);
+                while (atomicCAS(table+slot,query_hash_empty,key)!=query_hash_empty)
+                    slot=(slot+1)&(query_hash_slots-1);
+            }
+            __syncwarp();
+        }
+    }
+    tc::Count result=0;
+    for (tc::Offset base=0;base<total;base+=32) {
+        const auto q=base+lane;
+        unsigned lo=0,hi=32;
+        for (unsigned step=0;step<6;++step) {
+            const unsigned mid=lo+(hi-lo)/2;
+            const auto limit=__shfl_sync(0xffffffffU,end,mid<32?mid:31);
+            if (lo<hi) { if (limit<=q) lo=mid+1; else hi=mid; }
+        }
+        const unsigned owner=lo<32?lo:31;
+        const auto previous=__shfl_sync(0xffffffffU,end,owner?owner-1:0);
+        const auto start=owner?previous:0ULL;
+        const auto owner_ab=__shfl_sync(0xffffffffU,ab,owner);
+        if (q<total) {
+            const auto key=neighbors[owner_ab+q-start];
+            if (use_hash) {
+                auto slot=query_hash_slot(key);
+                for (unsigned probe=0;probe<query_hash_slots;++probe) {
+                    const auto item=table[slot];
+                    if (item==key) { ++result;break; }
+                    if (item==query_hash_empty) break;
+                    slot=(slot+1)&(query_hash_slots-1);
+                }
+            } else result+=tc::query_v2_lookup(neighbors,key,common_bb,common_be);
+        }
+    }
+    // All readers finish before any lane clears this warp's table next batch.
+    __syncwarp();
+    return result;
+}
 // Mode 0 scalar, 1 always pool, 2 execute a prefix then pool the remainder,
 // 3 compare estimated costs; 4 prefix budget then gate by remaining lane count.
 template<int Mode, bool Diagnostics>
 __global__ void count_query_v2(tc::Offset m, const tc::Offset* offsets,
         const tc::Vertex* neighbors, const tc::Vertex* sources, tc::Count* block_sums,
         unsigned budget, tc::QueryV2Policy policy, unsigned remaining_limit, tc::Offset* stats=nullptr) {
-    static_assert(Mode>=0 && Mode<=4,"unknown query v2 mode");
+    static_assert(Mode>=0 && Mode<=6,"unknown query v2 mode");
     const unsigned lane=threadIdx.x%32;
     const tc::Offset tid=static_cast<tc::Offset>(blockIdx.x)*blockDim.x+threadIdx.x;
     const tc::Offset first=tid/32*32;
     const tc::Offset stride=static_cast<tc::Offset>(gridDim.x)*blockDim.x;
+    __shared__ tc::Vertex hash_storage[Mode==6 ? (block_threads/32)*query_hash_slots : 1];
+    tc::Vertex* table=hash_storage+(Mode==6 ? (threadIdx.x/32)*query_hash_slots : 0);
     tc::Count local=0;
     for (tc::Offset base=first;base<m;base+=stride) {
         const auto e=base+lane;
@@ -68,7 +148,7 @@ __global__ void count_query_v2(tc::Offset m, const tc::Offset* offsets,
         }
         const auto original_a=ae-ab,b=be-bb;
         tc::Offset prefix=0;
-        bool pool=Mode==1,fast=false;
+        bool pool=Mode==1 || Mode==5 || Mode==6,fast=false;
         unsigned active_remaining=0;
         if constexpr (Mode==2 || Mode==4) {
             prefix=original_a<budget?original_a:static_cast<tc::Offset>(budget);
@@ -117,6 +197,8 @@ __global__ void count_query_v2(tc::Offset m, const tc::Offset* offsets,
             local+=tc::intersect_binary(neighbors,ab,ae,bb,be);
         } else if constexpr (Mode==1) {
             local+=query_v2_pool(neighbors,ab,ae,bb,be,lane);
+        } else if constexpr (Mode==5 || Mode==6) {
+            local+=query_v2_reuse<Mode==6>(neighbors,ab,ae,bb,be,lane,table,Diagnostics,stats);
         } else if constexpr (Mode==2) {
             if (pool) local+=query_v2_pool(neighbors,ab,ae,bb,be,lane);
         } else {
@@ -142,6 +224,8 @@ void launch_query_v2(int blocks, tc::Offset m, const tc::Offset* offsets,
         case 2: TC_QUERY_V2_LAUNCH(2); break;
         case 3: TC_QUERY_V2_LAUNCH(3); break;
         case 4: TC_QUERY_V2_LAUNCH(4); break;
+        case 5: TC_QUERY_V2_LAUNCH(5); break;
+        case 6: TC_QUERY_V2_LAUNCH(6); break;
         default: throw std::runtime_error("Unknown query v2 mode");
     }
 #undef TC_QUERY_V2_LAUNCH

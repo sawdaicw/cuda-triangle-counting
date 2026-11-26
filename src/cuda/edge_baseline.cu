@@ -58,7 +58,7 @@ int integer(const std::string& text, int low, int high) {
     return static_cast<int>(value);
 }
 Options parse(int argc, char** argv) {
-    if (argc < 2) throw std::runtime_error("Usage: " + std::string(argv[0]) + " INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N] (warp/split: --profile-gpu; split: --threshold N; query: --query-mode scalar|pool|adaptive --small N --pool-overhead N --pool-per-round N --pool-margin N --query-diagnostics; query-v2: --query-mode scalar|pool|budget|score|gated --remaining-limit N --budget N --small N --setup-cost N --locate-cost N --margin-percent N; global: --chunk B; v2/global: --bypass-edges M)");
+    if (argc < 2) throw std::runtime_error("Usage: " + std::string(argv[0]) + " INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N] (warp/split: --profile-gpu; split: --threshold N; query: --query-mode scalar|pool|adaptive --small N --pool-overhead N --pool-per-round N --pool-margin N --query-diagnostics; query-v2: --query-mode scalar|pool|budget|score|gated|reuse|hash --remaining-limit N --budget N --small N --setup-cost N --locate-cost N --margin-percent N; global: --chunk B; v2/global: --bypass-edges M)");
     Options o; o.input = argv[1];
     for (int i = 2; i < argc; ++i) {
         const std::string flag = argv[i];
@@ -82,6 +82,8 @@ Options parse(int argc, char** argv) {
             else if (value == "budget") o.query_v2_mode = 2;
             else if (value == "score") o.query_v2_mode = 3;
             else if (value == "gated") o.query_v2_mode = 4;
+            else if (value == "reuse") o.query_v2_mode = 5;
+            else if (value == "hash") o.query_v2_mode = 6;
             else throw std::runtime_error("Unknown query v2 mode: " + value);
         }
         else if (flag == "--remaining-limit" && TC_EDGE_MODE == 4) {
@@ -343,7 +345,7 @@ int main(int argc, char** argv) {
         const double median = sorted.size() % 2 ? sorted[k] : (sorted[k - 1] + sorted[k]) / 2;
         // Diagnostic readback is outside first_total_ms and GPU timing samples.
         const auto stats_begin = Clock::now();
-        const unsigned query_stats_count = TC_EDGE_MODE == 4 ? (options.query_v2_mode == 4 ? 44 : 11) : 9;
+        const unsigned query_stats_count = TC_EDGE_MODE == 4 ? (options.query_v2_mode == 4 ? 44 : (options.query_v2_mode >= 5 ? 15 : 11)) : 9;
         tc::Offset query_stats[44] = {};
 #if TC_EDGE_MODE == 3
         // Outside a template, if constexpr does not hide undeclared kernel names
@@ -456,7 +458,7 @@ int main(int argc, char** argv) {
             }
         }
         if constexpr (TC_EDGE_MODE == 4) {
-            constexpr const char* modes[] = {"scalar", "pool", "budget", "score", "gated"};
+            constexpr const char* modes[] = {"scalar", "pool", "budget", "score", "gated", "reuse", "hash"};
             std::cout << ",\"query_mode\":" << quote(modes[options.query_v2_mode])
                 << ",\"query_policy_version\":" << quote(options.query_v2_mode == 4 ? "warp-query-gated-v1" : "warp-query-v2-uncalibrated")
                 << ",\"kernel_mode_specialized\":true,\"query_budget\":" << options.budget
@@ -467,6 +469,10 @@ int main(int argc, char** argv) {
                 << ",\"locate\":" << options.query_v2_policy.locate
                 << ",\"margin_percent\":" << options.query_v2_policy.margin_percent << "}"
                 << ",\"query_diagnostics_enabled\":" << (options.query_diagnostics ? "true" : "false");
+            if (options.query_v2_mode >= 5)
+                std::cout << ",\"reuse_version\":\"warp-common-long-row-v1\""
+                          << ",\"hash_slots_per_warp\":" << (options.query_v2_mode==6 ? 1024 : 0)
+                          << ",\"hash_shared_bytes_per_block\":" << (options.query_v2_mode==6 ? 32768 : 0);
             if (options.query_diagnostics) {
                 std::cout << ",\"query_diagnostics\":{\"batches\":" << query_stats[0]
                     << ",\"fast_batches\":" << query_stats[1] << ",\"scalar_batches\":" << query_stats[2]
@@ -477,6 +483,11 @@ int main(int argc, char** argv) {
                     << ",\"prefix_queries\":" << query_stats[9] << ",\"remaining_queries\":" << query_stats[10]
                     << ",\"extra_device_buffer_bytes\":" << query_stats_count * sizeof(tc::Offset)
                     << ",\"pass_ms\":" << stats_ms;
+                if (options.query_v2_mode >= 5)
+                    std::cout << ",\"common_target_batches\":" << query_stats[11]
+                              << ",\"hash_batches\":" << query_stats[12]
+                              << ",\"hash_queries\":" << query_stats[13]
+                              << ",\"hash_inserted_keys\":" << query_stats[14];
                 if (options.query_v2_mode == 4) {
                     std::cout << ",\"remaining_threads_histogram\":[";
                     for (unsigned r = 0; r <= 32; ++r) std::cout << (r ? "," : "") << query_stats[11 + r];
