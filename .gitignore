@@ -25,3 +25,6 @@ paper/build/
 !results/a100_v1/raw/a100_results_v1.tar.gz
 !results/a100_v1/summary/speedup_overview.pdf
 results/a100_v1/work/
+
+# Locally calibrated GPU-bound models
+configs/local-schedule*/

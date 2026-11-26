@@ -1,8 +1,10 @@
 # CUDA Triangle Counting：单 GPU 精确三角形计数
 
-P09 并行计算课程项目。输入无向简单图，输出精确三角形总数。当前主线是 **OpenMP 图预处理 + CUDA 边并行计数**，并比较固定 warp、轻重分流和实验性查询池。新一轮主线为：先执行后进行 warp 局部协作，以及全局查询级任务分配。
+P09 并行计算课程项目。输入无向简单图，输出精确三角形总数。当前主线是 **OpenMP 图预处理 + CUDA 边并行计数**，并比较固定 warp、轻重分流和实验性查询池。最新原型为三候选成本选择器：baseline、分桶重排、查询成本门控分段；此前局部协作与全局查询版本保留。
 
 ## 当前进展（2026-11-26）
+
+- **新增自动调度原型**：[执行指南](docs/automatic_scheduling.md)。两个runner、36张分组训练/验证图、按GPU标定的小成本模型、冻结后独立进程评测。门控参数必须在目标硬件实测选择；新CUDA待服务器验证。
 
 - **编译修复**：修正共享 CUDA runner 的 JSON 输出缺失引号，并让六种后端的预处理检查将词法警告视为错误；新增全局 CUDA 仍需服务器实际编译验证。
 - **下一轮统一实验入口**：[实验指南](docs/research_experiments.md)。扫描局部 K/R、全局查询 B 和小图绕过阈值 M，冻结参数后进行真实图评测与 Orkut 压力测试；保存原始 JSON、哈希、资源日志、CSV 与 PDF/PNG。
@@ -21,7 +23,8 @@ P09 并行计算课程项目。输入无向简单图，输出精确三角形总�
 
 | 现在想看什么 | 入口 |
 |---|---|
-| 下一轮执行顺序、参数曲线、结果保存与绘图 | [统一实验指南](docs/research_experiments.md) |
+| 自动调度：生成、标定、拟合与冻结评测 | [自动调度指南](docs/automatic_scheduling.md) |
+| 上一轮执行顺序、参数曲线、结果保存与绘图 | [统一实验指南](docs/research_experiments.md) |
 | A100 实验配置、结果与限制 | [A100 第一轮结果](docs/a100_v1_results.md) |
 | 完整原始记录、CSV、图与复算 | [results/a100_v1](results/a100_v1/README.md) |
 | 剩余线程门控、运行与诊断 | [gated 指南](docs/query_gate.md) |
@@ -49,9 +52,11 @@ P09 并行计算课程项目。输入无向简单图，输出精确三角形总�
 | `tc_gpu_split` | 轻边线程计算，重边入队后 warp 计算 | 两阶段分流对照 |
 | `tc_gpu_query` | v1 批内评分/虚拟查询池 | 保留上一轮探索版本 |
 | `tc_gpu_query_v2` | budget / score / gated 门控 | 当前局部协作主线，score 保留作历史探索 |
+| `tc_schedule_calibrate` | 一图驻留，交错测试三候选及分段门控参数 | 硬件标定，待 GPU 验证 |
+| `tc_schedule_auto` | 小任务粗门控、成本预测、仅执行所选策略 | 自动调度/强制候选评价，待 GPU 验证 |
 | `tc_gpu_query_global` | 全局查询前缀索引 + 每线程 B 次查询 | 新查询级主线，待 GPU 验证 |
 
-GPU 并行入口共用 runner，块内 CUB BlockReduce、全局 DeviceReduce，计数为 64 位。研究主线是局部协作与全局查询；小图可按边数阈值直接走原 baseline。统一参数需从开发曲线选择并冻结，尚无已经证明全面有效的自动调优规则。
+GPU 并行入口共用 runner，块内 CUB BlockReduce、全局 DeviceReduce，计数为 64 位。当前新主线是成本模型选择 baseline、分桶或门控分段。便宜抽样和必要时的GPU特征用于选择，全部成本计入评价；模型需在目标硬件标定并在留出图验证。此前局部协作/全局查询作为探索记录保留。
 
 ## 输入与计数原理
 
@@ -151,7 +156,7 @@ python3 scripts/prepare_benchmark.py generate --suite core
 
 ## 后续研究与边界
 
-v2 两条路线已加入源码，下一步先验证新 CUDA 实现，再比较实际执行剩余工作与提前评分两种选择方式；不预先认定新方案优于 baseline。查询级思想与 WeTriC 等已有研究相关，不作为首次提出的概念。见[研究计划](docs/research_plan.md)。
+历史 v2 路线保留；当前执行顺序以[自动调度指南](docs/automatic_scheduling.md)为准，先验证新 CUDA，再标定模型及固定方法评测，不预先认定自动选择优于 baseline。查询级思想与 WeTriC 等已有研究相关，不作为首次提出的概念。见[研究计划](docs/research_plan.md)。
 
 当前整张 CSR 常驻显存，没有 out-of-core、显存限额或自动超时。内部顶点32位、偏移和计数64位；计数溢出尚未检测。CPU临时数组也占主存。仓库尚未指定开源许可证，第三方资料遵循各自条款。
 

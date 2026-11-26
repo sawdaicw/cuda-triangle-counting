@@ -51,3 +51,19 @@
 - `tests/test_research_workflow.py`：假设备测试执行协议、冻结检查、错误保存与绘图；其数据不属于性能结果。
 
 完整使用顺序见 [实验指南](research_experiments.md)。
+
+
+## 自动调度原型
+
+- `src/common/schedule_policy.hpp`：段划分/尾段合并、查询代理成本门控、特征归约结构、便宜抽样、模型读取与保守选择。
+- `src/cuda/schedule_kernels.cuh`：GPU特征、64桶重排、普通边计数、带容量回退的段队列。
+- `src/cuda/schedule_runner.cu`：标定/自动执行两个入口共用的预处理、资源和计时逻辑。
+- `scripts/generate_schedule_training.py`：36基础图与可选编号变体，按基础图分组划分。
+- `scripts/schedule_experiments.py`：标定/冻结评测，保存命令、哈希、状态与原始结果。
+- `scripts/fit_schedule_model.py`：小型非负成本模型、验证选择器、导出参数及诊断CSV/图。
+- `scripts/summarize_schedule.py`：完整成本与选择阶段成本的regret、退化和加速比。
+- `tests/test_schedule_policy.cpp`：段覆盖、容量溢出、独立穷举核对与选择逻辑。
+- `tests/check_schedule.py`：服务器上三候选及自动分支的GPU验证。
+- `tests/test_schedule_cuda_syntax.py`：去掉launch语法后的host C++语义检查，**不是nvcc/device编译**。
+
+运行顺序与限制见 [自动调度指南](automatic_scheduling.md)。
