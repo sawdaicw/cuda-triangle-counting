@@ -461,7 +461,7 @@ int main(int argc, char** argv) {
                 << ",\"query_policy_version\":" << quote(options.query_v2_mode == 4 ? "warp-query-gated-v1" : "warp-query-v2-uncalibrated")
                 << ",\"kernel_mode_specialized\":true,\"query_budget\":" << options.budget
                 << ",\"remaining_limit\":" << options.remaining_limit
-                << ",\"diagnostics_inspect_candidate\":true
+                << ",\"diagnostics_inspect_candidate\":true"
                 << ",\"query_policy\":{\"small\":" << options.query_v2_policy.small
                 << ",\"setup\":" << options.query_v2_policy.setup
                 << ",\"locate\":" << options.query_v2_policy.locate

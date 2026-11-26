@@ -24,7 +24,7 @@ class QueryBenchmarkChecks(unittest.TestCase):
             for name in ['cuda_runtime.h','cub/block/block_reduce.cuh','cub/device/device_reduce.cuh','cub/device/device_scan.cuh']:
                 stub=include/name;stub.parent.mkdir(parents=True,exist_ok=True);stub.write_text('')
             for mode in range(6):
-                result=subprocess.run(['g++','-std=c++17','-E','-x','c++',
+                result=subprocess.run(['g++','-std=c++17','-Werror','-E','-x','c++',
                     '-I',str(include),f'-DTC_EDGE_MODE={mode}',str(ROOT/'src/cuda/edge_baseline.cu')],
                     text=True,capture_output=True,check=True)
                 if mode==3:
