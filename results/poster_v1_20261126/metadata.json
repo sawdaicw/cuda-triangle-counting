@@ -1,0 +1,173 @@
+{
+  "schema": "poster-benchmark-v1",
+  "parameters": {
+    "build": "build",
+    "out": "results/poster_v1",
+    "runs": 10,
+    "warmup": 5,
+    "repeat": 30,
+    "threads": 12,
+    "blocks": 864,
+    "timeout": 600,
+    "seed": 20261126,
+    "without_split": false
+  },
+  "variants": {
+    "edge": [
+      "tc_gpu_edge_baseline",
+      []
+    ],
+    "pool": [
+      "tc_gpu_query_v2",
+      [
+        "--query-mode",
+        "pool"
+      ]
+    ],
+    "reuse": [
+      "tc_gpu_query_v2",
+      [
+        "--query-mode",
+        "reuse"
+      ]
+    ],
+    "gate_reuse": [
+      "tc_gpu_query_v2",
+      [
+        "--query-mode",
+        "reuse-gated",
+        "--small",
+        "8",
+        "--bypass-edges",
+        "262144"
+      ]
+    ],
+    "gate_hash": [
+      "tc_gpu_query_v2",
+      [
+        "--query-mode",
+        "hash-gated",
+        "--small",
+        "8",
+        "--bypass-edges",
+        "262144"
+      ]
+    ],
+    "split_gt32": [
+      "tc_gpu_split",
+      [
+        "--threshold",
+        "33"
+      ]
+    ]
+  },
+  "launch_common": [
+    "--parser",
+    "omp",
+    "--mapping",
+    "omp",
+    "--sort",
+    "omp",
+    "--threads",
+    "12",
+    "--blocks",
+    "864",
+    "--verify",
+    "--warmup",
+    "5",
+    "--repeat",
+    "30"
+  ],
+  "gpu_metric": "median over independent processes of median count_reduce_ms_samples",
+  "full_metric": "median first_total_ms across independent processes; includes preprocessing/setup/transfers",
+  "includes": "count kernels, pool/hash preparation and CUB reduction; split includes queue reset/build and both count passes",
+  "file_cache": "not flushed; input hashing reads files before measurement; filesystem cache typically warm",
+  "ordering": "randomized graph order and randomized variant order within each graph, every round",
+  "input_sha256": {
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/com-amazon.ungraph.txt": "9c403688d01417ca452910947a7000bcd61965fc583f4afe57eb209c8b057b7a",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/roadNet-CA.txt": "04b991d4d5285bda35c699244ccdac9f4b35818c0d0bfb037b1f852be103b540",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/web-Google.txt": "8c0f453f1eb1e24ad145e36e542b129083237e96e585abae768927bdb70167d1",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/amazon0302.txt": "5fc50df9f5e242bd89bbeebea1e7a8d96b577a1f209b5c1b14785784b246fc8b",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/Wiki-Vote.txt": "d2afbedf262126f820c6b3dd9f39a6d68e6f5ea839c0508297032ca77578b28a",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/soc-Epinions1.txt": "3e42b000e66cada74053ac7f8b24de291f9837264421dc2f3730b45cc58d17b1",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/cit-Patents.txt": "d2a11214ec084e3767f147e8736fc9f723aea5f1b067632007d5206cf54c8529",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/generated/S1.txt": "63654c738ae340bdfd4e86a56763361662aca84fe28dca18bc1aba0e6438afff",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/generated/S2.txt": "63732163b4b66822c620ffecbe93e7aff7d4ac83d399d49e8e14bab09861bf24",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/generated/S3.txt": "6edcec2fcc0aeb77d566c8313573117dd5b9b208f12017568ab3b5e36a70fade",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/generated/S4.txt": "06379ac3e65a303675b4ea43b15e7edc7de298cd532e086262bb5147f93900f8",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/generated/S5.txt": "e51a4b7f606a8b0c4ba189416e76fb95eff16c56f5de9965b6f04c7c39514d67",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/generated/S6.txt": "c21cb476c57f60d5f900d106bcec1c249b1a77edff438cbfb227f8d99a7391a7",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/data/generated/S7.txt": "4d02586d519082504c1dd54c666c3958eab0381a4888d9160399d10a8b37e73b"
+  },
+  "executable_sha256": {
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/build/tc_gpu_edge_baseline": "e2fdf272a13f0fe96891942f64dc90265d5f63f54b9e5aa3f8450d78d44bed58",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/build/tc_gpu_query_v2": "545ead74b9f3199c1eee9e4e174b55bacadabeebc54f69dbd728d23b4e259aff",
+    "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/build/tc_gpu_split": "d00062989e93e9873bcf972f941712e99886c29eb7df512190c8684b626ab06a"
+  },
+  "source_sha256": {
+    "src/common/edge_binary.hpp": "d6d650148009a542b7ffe692db221c179a8e0b06a014cb05f301ef48ecb2f08e",
+    "src/common/global_queries.hpp": "6b75513e2aaf24143263009d8ebc0c313f8d0f16f77d884df0f7d6eed43b2431",
+    "src/common/graph.hpp": "806fb2b909db334a7935099e34f24b190c3f4203b00206910cb98ed553887634",
+    "src/common/preprocess.cpp": "4a176299a3f6eb4aaab82fd33aa3caf68864c770d91f3278712945230c3598ac",
+    "src/common/preprocess.hpp": "955ca67b20e7ed36a1aa73032a7d07492567b9e682fb9d94fa26f4bd03574a23",
+    "src/common/profile_json.hpp": "367d717b51a73a793fc83fb5f93b6b49d8dabd62e7c474806a1aaef9f74965fe",
+    "src/common/query_policy.hpp": "2e5c0ed116552d5334ed509e84c9cd6e3192825e661226aaf861a928857e3ddc",
+    "src/common/query_v2_policy.hpp": "f94c48e6a9a99358d6ef0a3719cb698585a390642037381b24f3e4077f8b0508",
+    "src/common/schedule_policy.hpp": "a1e77ad3fa12aa2d5d9f2d1f02ba4c2cf85c96d17ddd4bbd1e8a22a3f457e5d7",
+    "src/common/warp_tasks.hpp": "46d7c6b511888a530b4e756773ac737bb8c0150a3bdd255316c1405c51c4d810",
+    "src/cuda/README.md": "e4dc1e6903c490971347cf82a0f51ba35ccb5458fed41c51955f7a1232191122",
+    "src/cuda/edge_baseline.cu": "f16f8b5731eba6841b597366aaa1207913e9b5ed81128b8e803edb77214e5840",
+    "src/cuda/global_query_kernels.cuh": "107dad2fdf296ed655be90dcf0fac93961b0b7f84115776f8b50e46b52b9af6b",
+    "src/cuda/query_kernels.cuh": "8bd8e43b868c255277d3a69c62470b0345fccc5111a96cdda3a2d29f9e9d5174",
+    "src/cuda/query_v2_kernels.cuh": "47c6c4c340d5dcbcd9fea94a1f733f724c5ed7be980d47bc334380dd0f709029",
+    "src/cuda/schedule_kernels.cuh": "b6b2eb36af5d498ff9be9b77beaf214b78a36997e05a8d9a3c707a8ba47e9eae",
+    "src/cuda/schedule_runner.cu": "313f55088576e1bf123d3d54f9af8a1edd4a44635dd7c3f6e21477f19b51b11e",
+    "src/cuda/serial.cu": "04a80630382e02a8e8b02c85c9831e464582710aa7ff86242e3851c15e63714b",
+    "src/cuda/warp_kernels.cuh": "8e052c9f853ca4ec817cd27910501e93cc19efbdb9d60a24b489ab5f5b7dcdf2",
+    "CMakeLists.txt": "9b2202178399529f05af1831b31efa8142e1c9ef62ea4f18d2161e96b1f53784",
+    "scripts/benchmark_poster.py": "69b353077efab071d80e3d11847588d88631096bd6fb6a5e5eb53df36b0f438f"
+  },
+  "archive_source_commit": "763670deca4db7faa3fcf8a0577ed05cfefcbbb7",
+  "local_patch": {
+    "patch": "poster-schedule-v1",
+    "base_commit": "763670deca4db7faa3fcf8a0577ed05cfefcbbb7",
+    "rules": {
+      "small_graph_edges": 262144,
+      "short_queries": 8,
+      "hash_min_length": 64,
+      "hash_max_length": 512,
+      "hash_queries_per_key": 8,
+      "split_queries_strictly_greater_than": 32
+    },
+    "validation": "Source reviewed only; no local compilation or test execution; server correctness required",
+    "files": {
+      "src/cuda/edge_baseline.cu": "f16f8b5731eba6841b597366aaa1207913e9b5ed81128b8e803edb77214e5840",
+      "src/cuda/query_v2_kernels.cuh": "47c6c4c340d5dcbcd9fea94a1f733f724c5ed7be980d47bc334380dd0f709029",
+      "scripts/benchmark_poster.py": "69b353077efab071d80e3d11847588d88631096bd6fb6a5e5eb53df36b0f438f",
+      "tests/check_poster.py": "8a6ad048c69572ef01aed7206b55a05768bdfc0c85605538a486a5e1654be91e",
+      "docs/poster_benchmark.md": "bc2d86502ad9b5ff7558d0581952468cbfab9af24de8f60eb313b6115c15f50a",
+      "POSTER_PATCH_README.md": "bc2d86502ad9b5ff7558d0581952468cbfab9af24de8f60eb313b6115c15f50a"
+    },
+    "installed_at": "2026-11-26T22:43:45.724693+08:00",
+    "backup": "/root/cuda-triangle-counting-763670deca4db7faa3fcf8a0577ed05cfefcbbb7/backups/poster_v1_20261126_224345_723321"
+  },
+  "hardware": {
+    "returncode": 0,
+    "stdout": "Thu Nov 26 22:44:45 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 570.211.01             Driver Version: 570.211.01     CUDA Version: 12.8     |\n|-----------------------------------------+------------------------+----------------------+\n| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA A100-PCIE-40GB          On  |   00000000:B1:00.0 Off |                  Off |\n| N/A   27C    P0             34W /  250W |       0MiB /  40960MiB |      0%      Default |\n|                                         |                        |             Disabled |\n+-----------------------------------------+------------------------+----------------------+\n                                                                                         \n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|  No running processes found                                                             |\n+-----------------------------------------------------------------------------------------+\n",
+    "stderr": ""
+  },
+  "cpu": {
+    "returncode": 0,
+    "stdout": "Architecture:                    x86_64\nCPU op-mode(s):                  32-bit, 64-bit\nAddress sizes:                   46 bits physical, 48 bits virtual\nByte Order:                      Little Endian\nCPU(s):                          96\nOn-line CPU(s) list:             0-95\nVendor ID:                       GenuineIntel\nModel name:                      Intel(R) Xeon(R) Gold 6248R CPU @ 3.00GHz\nCPU family:                      6\nModel:                           85\nThread(s) per core:              2\nCore(s) per socket:              24\nSocket(s):                       2\nStepping:                        7\nCPU max MHz:                     4000.0000\nCPU min MHz:                     1200.0000\nBogoMIPS:                        6000.00\nFlags:                           fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf pni pclmulqdq dtes64 ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid dca sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb cat_l3 cdp_l3 invpcid_single intel_ppin ssbd mba ibrs ibpb stibp ibrs_enhanced tpr_shadow vnmi flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm mpx rdt_a avx512f avx512dq rdseed adx smap clflushopt clwb intel_pt avx512cd avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local dtherm ida arat pln pts hwp hwp_act_window hwp_epp hwp_pkg_req pku ospke avx512_vnni md_clear flush_l1d arch_capabilities\nVirtualization:                  VT-x\nL1d cache:                       1.5 MiB (48 instances)\nL1i cache:                       1.5 MiB (48 instances)\nL2 cache:                        48 MiB (48 instances)\nL3 cache:                        71.5 MiB (2 instances)\nNUMA node(s):                    2\nNUMA node0 CPU(s):               0-23,48-71\nNUMA node1 CPU(s):               24-47,72-95\nVulnerability Itlb multihit:     KVM: Mitigation: VMX disabled\nVulnerability L1tf:              Not affected\nVulnerability Mds:               Not affected\nVulnerability Meltdown:          Not affected\nVulnerability Mmio stale data:   Mitigation; Clear CPU buffers; SMT vulnerable\nVulnerability Retbleed:          Mitigation; Enhanced IBRS\nVulnerability Spec store bypass: Mitigation; Speculative Store Bypass disabled via prctl and seccomp\nVulnerability Spectre v1:        Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:        Mitigation; Enhanced IBRS, IBPB conditional, RSB filling, PBRSB-eIBRS SW sequence\nVulnerability Srbds:             Not affected\nVulnerability Tsx async abort:   Mitigation; TSX disabled\n",
+    "stderr": ""
+  },
+  "platform": "Linux-5.15.0-56-generic-x86_64-with-glibc2.35",
+  "environment": {
+    "CUDA_VISIBLE_DEVICES": null,
+    "OMP_DYNAMIC": "FALSE",
+    "OMP_WAIT_POLICY": "PASSIVE",
+    "OMP_PROC_BIND": null,
+    "OMP_PLACES": null,
+    "OMP_THREAD_LIMIT": null
+  }
+}

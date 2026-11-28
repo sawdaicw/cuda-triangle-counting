@@ -2,7 +2,11 @@
 
 P09 并行计算课程项目。输入无向简单图，输出精确三角形总数。当前主线是 **OpenMP 图预处理 + CUDA 边并行计数**，并比较固定 warp、轻重分流和实验性查询池。当前集中探索 **warp 内查询协作 + 查询目标复用**。三候选成本选择器暂缓推进，保留其源码和历史实验。
 
-## 当前进展（2026-11-26）
+## 当前进展（2026-11-28）
+
+- **新版独立 hash 队列**：[完整执行指南](docs/hash_queue.md)。`--query-mode hash-queue` 保留 gated-reuse 主路径，将高复用批次送往独立 hash kernel；producer 不预留大哈希表。全14图默认三版各10次，保存队列/资源/阶段独立诊断。代码检查后提交，新增CUDA待服务器编译、验证和实测。
+- **上一轮正式探索归档**：[14图×6版×10次，840次全部正确](results/poster_v1_20261126/README.md)。已同步用户上传的门控源码、评测脚本与结果汇总。gated-reuse减少部分简单图退化，融合hash在高密度结构有收益，但未保住真实图性能；不宣称跨图普遍加速。
+
 
 - **本轮实现**：[共享查询目标与哈希复用](docs/warp_target_reuse.md)。在现有 `tc_gpu_query_v2` 增加 `reuse`（共享长表二分）与 `hash`（warp 私有 shared-memory 哈希）两条路径；只做四配置评测：edge/pool/reuse/hash，不训练选择器、不扫描超参数。代码检查后提交，未在本地编译或运行；服务器执行文档中的验证与实测。
 - **研究收敛**：此前三候选选择器的回传验证未显示选择收益，特征提取成本明显，暂不作为海报的优化结论。当前改进重点为减少局部查询协作的查找和访存成本。
@@ -27,6 +31,8 @@ P09 并行计算课程项目。输入无向简单图，输出精确三角形总�
 
 | 现在想看什么 | 入口 |
 |---|---|
+| 最新独立hash队列、三版评测及诊断 | [hash-queue指南](docs/hash_queue.md) |
+| 中期840次评测与限制 | [poster_v1结果](results/poster_v1_20261126/README.md) |
 | 自动调度：生成、标定、拟合与冻结评测 | [自动调度指南](docs/automatic_scheduling.md) |
 | 上一轮执行顺序、参数曲线、结果保存与绘图 | [统一实验指南](docs/research_experiments.md) |
 | A100 实验配置、结果与限制 | [A100 第一轮结果](docs/a100_v1_results.md) |
@@ -60,7 +66,7 @@ P09 并行计算课程项目。输入无向简单图，输出精确三角形总�
 | `tc_schedule_auto` | 小任务粗门控、成本预测、仅执行所选策略 | 自动调度/强制候选评价，待 GPU 验证 |
 | `tc_gpu_query_global` | 全局查询前缀索引 + 每线程 B 次查询 | 新查询级主线，待 GPU 验证 |
 
-GPU 并行入口共用 runner，块内 CUB BlockReduce、全局 DeviceReduce，计数为 64 位。当前主线是 warp 内查询协作，并尝试复用共同查询目标。成本选择器、全局查询作为探索代码保留；新路径的建表、同步与查询均纳入 GPU 计数计时。
+GPU 并行入口共用 runner，块内 CUB BlockReduce、全局 DeviceReduce，计数为 64 位。当前主线是 gated-reuse 主路径加独立 hash 批次队列，并复用共同查询目标。成本选择器、全局查询作为探索代码保留；新路径的建表、同步与查询均纳入 GPU 计数计时。
 
 ## 输入与计数原理
 
@@ -169,3 +175,14 @@ python3 scripts/prepare_benchmark.py generate --suite core
 代码更新后重新编译；本地源码有 Git 元数据时才可使用 `git pull --ff-only`。下载 ZIP 解压的目录不能直接 pull，可另下载新版本并复制需要保留的数据和结果。GitHub 网络阻塞时，优先在本地下载后通过 SCP 上传，不依赖第三方镜像。
 
 实验原始记录需在释放实例前另行备份；源码、文档和特选结果提交到 Git。自动生成的构建目录、大图、解压后的实验工作目录不提交。原始 A100 结果包已作为小型复现归档保存于 `results/a100_v1/raw/`。
+
+## 海报评测冻结版：五条主线＋简单分流
+
+新增 `reuse-gated` / `hash-gated`，见[固定配置与计时口径](docs/poster_benchmark.md)。
+两版均在小图绕过额外调度（m<262144），短批查询数<=8独立执行；
+hash-gated 只在共同长表长64..512、Q>=8b时建表。保留原pool/reuse/hash。
+`benchmark_poster.py` 默认14图×6版×10个独立进程，固定参数、随机交错，
+按进程内GPU计数归约中位数再取进程间中位数，保存IQR、原始样本与完整时间。
+简单分流参考严格查询数>32入队，对应原程序`--threshold 33`。
+
+新增 `hash-queue` 沿用 `tc_gpu_query_v2` 入口，旧版融合 hash 与门控保持可运行。先按[hash-queue指南](docs/hash_queue.md)做服务器验证，再执行同轮评测。

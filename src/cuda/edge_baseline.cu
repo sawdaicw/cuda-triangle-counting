@@ -58,7 +58,7 @@ int integer(const std::string& text, int low, int high) {
     return static_cast<int>(value);
 }
 Options parse(int argc, char** argv) {
-    if (argc < 2) throw std::runtime_error("Usage: " + std::string(argv[0]) + " INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N] (warp/split: --profile-gpu; split: --threshold N; query: --query-mode scalar|pool|adaptive --small N --pool-overhead N --pool-per-round N --pool-margin N --query-diagnostics; query-v2: --query-mode scalar|pool|budget|score|gated|reuse|hash --remaining-limit N --budget N --small N --setup-cost N --locate-cost N --margin-percent N; global: --chunk B; v2/global: --bypass-edges M)");
+    if (argc < 2) throw std::runtime_error("Usage: " + std::string(argv[0]) + " INPUT.txt [--verify] [--profile-preprocess] [--repeat N] [--warmup N] [--blocks N] (warp/split: --profile-gpu; split: --threshold N; query: --query-mode scalar|pool|adaptive --small N --pool-overhead N --pool-per-round N --pool-margin N --query-diagnostics; query-v2: --query-mode scalar|pool|budget|score|gated|reuse|hash|reuse-gated|hash-gated|hash-queue --remaining-limit N --budget N --small N --setup-cost N --locate-cost N --margin-percent N; global: --chunk B; v2/global: --bypass-edges M)");
     Options o; o.input = argv[1];
     for (int i = 2; i < argc; ++i) {
         const std::string flag = argv[i];
@@ -84,6 +84,9 @@ Options parse(int argc, char** argv) {
             else if (value == "gated") o.query_v2_mode = 4;
             else if (value == "reuse") o.query_v2_mode = 5;
             else if (value == "hash") o.query_v2_mode = 6;
+            else if (value == "reuse-gated") o.query_v2_mode = 7;
+            else if (value == "hash-gated") o.query_v2_mode = 8;
+            else if (value == "hash-queue") o.query_v2_mode = 9;
             else throw std::runtime_error("Unknown query v2 mode: " + value);
         }
         else if (flag == "--remaining-limit" && TC_EDGE_MODE == 4) {
@@ -184,6 +187,7 @@ int main(int argc, char** argv) {
         const auto sources = tc::edge_sources(graph);
         const auto metadata_ready = Clock::now();
         const bool bypass_used = TC_EDGE_MODE >= 4 && graph.neighbors.size() < options.bypass_edges;
+        const bool hash_queue_used = TC_EDGE_MODE == 4 && options.query_v2_mode == 9 && !bypass_used;
         if constexpr (TC_EDGE_MODE == 5) {
             if (!bypass_used && graph.neighbors.size() >= static_cast<std::size_t>(std::numeric_limits<int>::max()))
                 throw std::runtime_error("Global-query scan requires m+1 <= INT_MAX on this implementation");
@@ -199,7 +203,7 @@ int main(int argc, char** argv) {
         if (blocks > prop.maxGridSize[0]) throw std::runtime_error("--blocks exceeds device grid limit");
         Buffer<tc::Offset> d_offsets(graph.offsets.size());
         Buffer<tc::Vertex> d_neighbors(graph.neighbors.size()), d_sources(sources.size());
-        const std::size_t sum_count = static_cast<std::size_t>(blocks) * (TC_EDGE_MODE == 2 ? 2 : 1);
+        const std::size_t sum_count = static_cast<std::size_t>(blocks) * ((TC_EDGE_MODE == 2 || hash_queue_used) ? 2 : 1);
         // Keep CUB's item count in its supported signed-int range.
         if (sum_count > static_cast<std::size_t>(std::numeric_limits<int>::max()))
             throw std::runtime_error("Too many block partial sums");
@@ -209,6 +213,23 @@ int main(int argc, char** argv) {
             queue = std::make_unique<Buffer<tc::Offset>>(graph.neighbors.size());
             queue_size = std::make_unique<Buffer<tc::Offset>>(1);
         }
+        const tc::Offset hash_queue_capacity = hash_queue_used ?
+            graph.neighbors.size()/32 + (graph.neighbors.size()%32 != 0) : 0;
+        std::size_t queue_primary_shared = 0, queue_hash_shared = 0;
+        int queue_primary_registers = 0, queue_hash_registers = 0;
+#if TC_EDGE_MODE == 4
+        if (hash_queue_used) {
+            queue = std::make_unique<Buffer<tc::Offset>>(hash_queue_capacity);
+            queue_size = std::make_unique<Buffer<tc::Offset>>(1);
+            cudaFuncAttributes primary_attributes{}, hash_attributes{};
+            check(cudaFuncGetAttributes(&primary_attributes, count_query_v2<9,false>));
+            check(cudaFuncGetAttributes(&hash_attributes, count_queued_hash_batches));
+            queue_primary_shared = primary_attributes.sharedSizeBytes;
+            queue_hash_shared = hash_attributes.sharedSizeBytes;
+            queue_primary_registers = primary_attributes.numRegs;
+            queue_hash_registers = hash_attributes.numRegs;
+        }
+#endif
         std::size_t scratch_bytes = 0;
         check(cub::DeviceReduce::Sum(nullptr, scratch_bytes, d_sums.data, d_result.data, static_cast<int>(sum_count)));
         std::unique_ptr<Buffer<tc::Offset>> query_prefix;
@@ -226,7 +247,7 @@ int main(int argc, char** argv) {
         std::unique_ptr<Event> after_light, after_count;
         if (options.profile_gpu) {
             after_count = std::make_unique<Event>();
-            if constexpr (TC_EDGE_MODE == 2 || TC_EDGE_MODE == 5) after_light = std::make_unique<Event>();
+            if (TC_EDGE_MODE == 2 || TC_EDGE_MODE == 5 || hash_queue_used) after_light = std::make_unique<Event>();
         }
         const auto setup_ready = Clock::now();
         check(cudaMemcpy(d_offsets.data, graph.offsets.data(), d_offsets.bytes, cudaMemcpyHostToDevice));
@@ -283,9 +304,24 @@ int main(int argc, char** argv) {
             }
 #elif TC_EDGE_MODE == 4
             {
-                launch_query_v2<false>(blocks, graph.neighbors.size(), d_offsets.data, d_neighbors.data,
-                    d_sources.data, d_sums.data, options.query_v2_mode, options.budget, options.query_v2_policy, options.remaining_limit);
-                check(cudaGetLastError());
+                if (hash_queue_used) {
+                    // Reset/rebuild on every first run, warmup and measured repeat.
+                    check(cudaMemsetAsync(queue_size->data, 0, sizeof(tc::Offset)));
+                    launch_query_v2<false>(blocks, graph.neighbors.size(), d_offsets.data, d_neighbors.data,
+                        d_sources.data, d_sums.data, 9, options.budget, options.query_v2_policy,
+                        options.remaining_limit, nullptr, queue->data, queue_size->data);
+                    check(cudaGetLastError());
+                    if (after_light) check(cudaEventRecord(after_light->data));
+                    // Same stream orders producer writes before consumer reads.
+                    // Always launch, even for an empty queue; its cost is counted.
+                    count_queued_hash_batches<<<blocks,block_threads>>>(graph.neighbors.size(), d_offsets.data,
+                        d_neighbors.data, d_sources.data, d_sums.data+blocks, queue->data, queue_size->data);
+                    check(cudaGetLastError());
+                } else {
+                    launch_query_v2<false>(blocks, graph.neighbors.size(), d_offsets.data, d_neighbors.data,
+                        d_sources.data, d_sums.data, options.query_v2_mode, options.budget, options.query_v2_policy, options.remaining_limit);
+                    check(cudaGetLastError());
+                }
                 if (after_count) check(cudaEventRecord(after_count->data));
             }
 #elif TC_EDGE_MODE == 5
@@ -310,7 +346,7 @@ int main(int argc, char** argv) {
             float elapsed = 0; check(cudaEventElapsedTime(&elapsed, start.data, stop.data));
             float light_ms = 0, warp_ms = 0, reduce_ms = 0;
             if (options.profile_gpu) {
-                if constexpr (TC_EDGE_MODE == 2 || TC_EDGE_MODE == 5) {
+                if (TC_EDGE_MODE == 2 || TC_EDGE_MODE == 5 || hash_queue_used) {
                     check(cudaEventElapsedTime(&light_ms, start.data, after_light->data));
                     check(cudaEventElapsedTime(&warp_ms, after_light->data, after_count->data));
                 } else check(cudaEventElapsedTime(&warp_ms, start.data, after_count->data));
@@ -320,6 +356,10 @@ int main(int argc, char** argv) {
             tc::Count count = 0;
             check(cudaMemcpy(&count, d_result.data, sizeof(count), cudaMemcpyDeviceToHost));
             const auto done = Clock::now();
+            if (TC_EDGE_MODE == 4 && options.query_v2_mode == 9 && bypass_used && options.profile_gpu) {
+                light_ms = warp_ms;
+                warp_ms = 0;
+            }
             return Sample{elapsed, ms(download, done), ms(run_begin, done), count, light_ms, warp_ms, reduce_ms};
         };
         // A first complete one-shot result, before any benchmark warmup or reuse.
@@ -363,12 +403,21 @@ int main(int argc, char** argv) {
                 if (diagnostic_count != first.count) throw std::runtime_error("Diagnostic pass count mismatch");
             }
 #elif TC_EDGE_MODE == 4
-        if (options.query_diagnostics) {
+        // Unlike historical modes, hash-queue diagnostics describe the actual
+        // selected path. A graph-level bypass performs no candidate inspection.
+        if (options.query_diagnostics && !(options.query_v2_mode == 9 && bypass_used)) {
             Buffer<tc::Offset> counters(query_stats_count);
             check(cudaMemset(counters.data, 0, counters.bytes));
+            if (hash_queue_used) check(cudaMemsetAsync(queue_size->data, 0, sizeof(tc::Offset)));
             launch_query_v2<true>(blocks, graph.neighbors.size(), d_offsets.data, d_neighbors.data,
-                d_sources.data, d_sums.data, options.query_v2_mode, options.budget, options.query_v2_policy, options.remaining_limit, counters.data);
+                d_sources.data, d_sums.data, options.query_v2_mode, options.budget, options.query_v2_policy,
+                options.remaining_limit, counters.data, queue ? queue->data : nullptr, queue_size ? queue_size->data : nullptr);
             check(cudaGetLastError());
+            if (hash_queue_used) {
+                count_queued_hash_batches<<<blocks,block_threads>>>(graph.neighbors.size(), d_offsets.data,
+                    d_neighbors.data, d_sources.data, d_sums.data+blocks, queue->data, queue_size->data);
+                check(cudaGetLastError());
+            }
             check(cub::DeviceReduce::Sum(scratch.data, scratch_bytes, d_sums.data, d_result.data, static_cast<int>(sum_count)));
             check(cudaMemcpy(query_stats, counters.data, query_stats_count * sizeof(tc::Offset), cudaMemcpyDeviceToHost));
             tc::Count diagnostic_count = 0;
@@ -379,6 +428,13 @@ int main(int argc, char** argv) {
         tc::Offset total_queries = 0;
         if constexpr (TC_EDGE_MODE == 5) {
             if (query_prefix) check(cudaMemcpy(&total_queries, query_prefix->data + graph.neighbors.size(), sizeof(total_queries), cudaMemcpyDeviceToHost));
+        }
+        tc::Offset hash_queue_batches = 0;
+        if (hash_queue_used) {
+            check(cudaMemcpy(&hash_queue_batches, queue_size->data, sizeof(tc::Offset), cudaMemcpyDeviceToHost));
+            if (hash_queue_batches > hash_queue_capacity) throw std::runtime_error("Hash batch queue overflow");
+            if (options.query_diagnostics && query_stats[12] != hash_queue_batches)
+                throw std::runtime_error("Deferred hash batch diagnostic mismatch");
         }
         tc::Offset heavy_edges = 0;
         if constexpr (TC_EDGE_MODE == 2)
@@ -427,8 +483,14 @@ int main(int argc, char** argv) {
             write_samples("warp_count_ms_samples", warp_samples);
             write_samples("global_reduce_ms_samples", reduce_samples);
             if constexpr (TC_EDGE_MODE >= 3) {
-                std::cout << ",\"first_query_count_ms\":" << first.warp_count_ms;
-                write_samples("query_count_ms_samples", warp_samples);
+                const bool queued_mode = TC_EDGE_MODE == 4 && options.query_v2_mode == 9;
+                std::cout << ",\"first_query_count_ms\":" <<
+                    (queued_mode ? first.light_queue_ms + first.warp_count_ms : first.warp_count_ms);
+                if (queued_mode) {
+                    std::vector<double> combined;
+                    for (std::size_t i=0;i<warp_samples.size();++i) combined.push_back(light_samples[i]+warp_samples[i]);
+                    write_samples("query_count_ms_samples", combined);
+                } else write_samples("query_count_ms_samples", warp_samples);
             }
         }
         if constexpr (TC_EDGE_MODE == 2) {
@@ -458,21 +520,50 @@ int main(int argc, char** argv) {
             }
         }
         if constexpr (TC_EDGE_MODE == 4) {
-            constexpr const char* modes[] = {"scalar", "pool", "budget", "score", "gated", "reuse", "hash"};
+            constexpr const char* modes[] = {"scalar", "pool", "budget", "score", "gated", "reuse", "hash", "reuse-gated", "hash-gated", "hash-queue"};
             std::cout << ",\"query_mode\":" << quote(modes[options.query_v2_mode])
                 << ",\"query_policy_version\":" << quote(options.query_v2_mode == 4 ? "warp-query-gated-v1" : "warp-query-v2-uncalibrated")
                 << ",\"kernel_mode_specialized\":true,\"query_budget\":" << options.budget
                 << ",\"remaining_limit\":" << options.remaining_limit
-                << ",\"diagnostics_inspect_candidate\":true"
+                << ",\"diagnostics_inspect_candidate\":" << (options.query_v2_mode == 9 ? "false" : "true")
                 << ",\"query_policy\":{\"small\":" << options.query_v2_policy.small
                 << ",\"setup\":" << options.query_v2_policy.setup
                 << ",\"locate\":" << options.query_v2_policy.locate
                 << ",\"margin_percent\":" << options.query_v2_policy.margin_percent << "}"
                 << ",\"query_diagnostics_enabled\":" << (options.query_diagnostics ? "true" : "false");
+            if (options.query_v2_mode == 8 || options.query_v2_mode == 9)
+                std::cout << ",\"hash_gate_min_length\":64,\"hash_gate_max_length\":512,\"hash_gate_queries_per_key\":8";
+            if (options.query_v2_mode == 9) {
+                std::cout << ",\"hash_queue_version\":\"warp-batch-queue-v1\""
+                    << ",\"hash_queue_used\":" << (hash_queue_used ? "true" : "false")
+                    << ",\"hash_queue_capacity_batches\":" << hash_queue_capacity
+                    << ",\"hash_queue_batches\":" << hash_queue_batches
+                    << ",\"hash_queue_buffer_bytes\":" << queue_bytes
+                    << ",\"queue_consumer_hash_slots_per_warp\":1024"
+                    << ",\"hash_queue_rebuilt_each_run\":true"
+                    << ",\"hash_queue_host_readback_in_timing\":false"
+                    << ",\"queue_primary_static_shared_bytes\":" << queue_primary_shared
+                    << ",\"queue_consumer_static_shared_bytes\":" << queue_hash_shared
+                    << ",\"queue_primary_registers_per_thread\":" << queue_primary_registers
+                    << ",\"queue_consumer_registers_per_thread\":" << queue_hash_registers
+                    << ",\"queue_resource_attributes_measured\":" << (hash_queue_used ? "true" : "false")
+                    << ",\"query_diagnostics_skipped_for_bypass\":" << (options.query_diagnostics && bypass_used ? "true" : "false");
+                if (options.profile_gpu) {
+                    std::cout << ",\"first_reuse_route_ms\":" << first.light_queue_ms
+                        << ",\"first_queued_hash_ms\":" << first.warp_count_ms;
+                    const auto write_queue_samples = [&](const char* name, const std::vector<double>& values) {
+                        std::cout << "," << quote(name) << ":[";
+                        for (std::size_t i=0;i<values.size();++i) std::cout << (i ? "," : "") << values[i];
+                        std::cout << "]";
+                    };
+                    write_queue_samples("reuse_route_ms_samples", light_samples);
+                    write_queue_samples("queued_hash_ms_samples", warp_samples);
+                }
+            }
             if (options.query_v2_mode >= 5)
                 std::cout << ",\"reuse_version\":\"warp-common-long-row-v1\""
-                          << ",\"hash_slots_per_warp\":" << (options.query_v2_mode==6 ? 1024 : 0)
-                          << ",\"hash_shared_bytes_per_block\":" << (options.query_v2_mode==6 ? 32768 : 0);
+                          << ",\"hash_slots_per_warp\":" << ((options.query_v2_mode==6 || options.query_v2_mode==8) ? 1024 : 0)
+                          << ",\"hash_shared_bytes_per_block\":" << ((options.query_v2_mode==6 || options.query_v2_mode==8) ? 32768 : 0);
             if (options.query_diagnostics) {
                 std::cout << ",\"query_diagnostics\":{\"batches\":" << query_stats[0]
                     << ",\"fast_batches\":" << query_stats[1] << ",\"scalar_batches\":" << query_stats[2]

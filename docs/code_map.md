@@ -67,3 +67,13 @@
 - `tests/test_schedule_cuda_syntax.py`：去掉launch语法后的host C++语义检查，**不是nvcc/device编译**。
 
 运行顺序与限制见 [自动调度指南](automatic_scheduling.md)。
+
+
+## 2026-11-28：独立hash批次队列
+
+- `src/cuda/query_v2_kernels.cuh`：Mode9 producer，借助原reuse共同目标检查在计数前延期符合hash条件的批次；独立`count_queued_hash_batches`消费队列。旧Mode7/8保留。
+- `src/cuda/edge_baseline.cu`：hash-queue缓冲、两阶段计时与归约、小图绕过和CUDA资源属性。
+- `scripts/benchmark_hash_queue.py`：默认三版全14图；正式计时后独立诊断。
+- `scripts/hash_queue_diagnostics.py`：实际入队/查询量、资源与阶段时间，不与主样本混合。
+- `tests/check_hash_queue.py`：服务器oracle、路由、空队列、碰撞、容量及绕过检查。
+- `results/poster_v1_20261126`：此前用户回传840次统一评测，勿与新版本混用。
